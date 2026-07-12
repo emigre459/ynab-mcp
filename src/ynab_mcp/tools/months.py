@@ -18,7 +18,7 @@ def parse_month(value: str) -> date:
     ----------
     value : str
         An ISO-formatted month (e.g. ``"2024-01-01"``) or the literal
-        string ``"current"`` for the current calendar month (UTC).
+        string ``"current"`` for the current calendar month (local time).
 
     Returns
     -------
