@@ -1,21 +1,47 @@
 [project]
-name = "agentic-ai-powered-repo-tooling"
-version = "0.0.0"
-description = "Template-only tooling: tests for the init/apply machinery. Removed or replaced at `make init`."
+# Placeholder name/description — replaced by scripts/init_template.py at `make init`.
+# Kept as a PEP 508-valid identifier so `uv sync` succeeds pre-init; the unique
+# token below (and `MCP server for YNAB` literal) are the substitution targets.
+name = "ynab-mcp"
+version = "0.1.0"
+description = "MCP server for YNAB"
+readme = "README.md"
 requires-python = ">=3.13.5,<3.14"
-dependencies = []
+dependencies = [
+    "pydantic>=2.12",
+    "python-dotenv>=1.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.26,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# Sample package lives at `src/example_app/`; init swaps both the project name
+# and this module-name to the user's chosen package at `make init`.
+module-name = "example_app"
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.4",
     "black>=26.3.0",
-    "ruff>=0.15.20",
     "mypy>=1.13.0",
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "pytest-xdist>=3.6.1",
+    "ruff>=0.15.20",
 ]
 
 [tool.black]
 line-length = 88
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+ignore_missing_imports = true
+show_error_codes = true
+disallow_untyped_defs = true
 
 [tool.ruff]
 line-length = 88
@@ -30,16 +56,12 @@ convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["E501", "D100", "D101", "D102", "D103", "D104"]
-"scripts/**" = ["E402", "E501", "D100"]
-
-[tool.mypy]
-python_version = "3.13"
-files = ["scripts", "tests"]
-ignore_missing_imports = true
-show_error_codes = true
-disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests/template"]
-addopts = "-n auto"
-pythonpath = ["."]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-n auto -m 'not e2e and not integration'"
+markers = [
+    "integration: marks tests that call live external APIs",
+    "e2e: marks tests that exercise the full pipeline against live services",
+]
