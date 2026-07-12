@@ -15,6 +15,8 @@ Python backend managed with `uv`. Run `make deps` then `make pr_check`.
 ## Running
 
 ```bash
+make run
+# or equivalently:
 uv run ynab-mcp
 ```
 
@@ -24,6 +26,12 @@ This starts the MCP server over stdio. To exercise it with
 ```bash
 npx @modelcontextprotocol/inspector uv run ynab-mcp
 ```
+
+In the Inspector UI: click **Connect**, then **List Tools** — you should
+see all 7 tools listed in [Tools](#tools) below (or 6, with `list-budgets`
+hidden, if you set `YNAB_DEFAULT_BUDGET_ID`). Run `list-budgets` (or
+`list-accounts` with a `budget_id`) and confirm it returns your real YNAB
+data, not an error.
 
 ## Tools
 
