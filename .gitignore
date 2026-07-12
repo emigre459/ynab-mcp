@@ -1,0 +1,28 @@
+# Python
+*.pyc
+__pycache__/
+.venv/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Node / bun
+node_modules/
+dist/
+coverage/
+bun.lockb
+*.local
+
+# Env / secrets
+.env
+
+# OS / editor
+.DS_Store
+
+# Claude Code
+.claude/worktrees/
+.claude/settings.local.json
+
+# Local scratch
+local/

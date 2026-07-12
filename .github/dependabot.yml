@@ -1,0 +1,64 @@
+version: 2
+updates:
+# >>> STACK:python
+  # uv-managed stack (pyproject.toml + uv.lock); "uv" updates the lockfile
+  # incl. transitive deps, which "pip" cannot.
+  - package-ecosystem: "uv"
+    directory: "/stacks/python"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Bundle routine minor/patch bumps into one PR; majors still land alone.
+      python-dev:
+        update-types: ["minor", "patch"]
+# <<< STACK:python
+# >>> STACK:react
+  # bun-managed stack (bun.lock); "npm" cannot read bun.lock.
+  - package-ecosystem: "bun"
+    directory: "/stacks/react"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "javascript"]
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Keep peer-coupled packages together so a major on one doesn't land as a
+      # separate, mutually-incompatible PR. (See #4: vite 8 needs plugin-react 6;
+      # @vitest/coverage-istanbul 4 needs vitest 4 — those must move as a set.)
+      vite:
+        patterns: ["vite", "@vitejs/*"]
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
+      # Everything else: bundle routine minor/patch bumps; majors land alone.
+      react-dev:
+        update-types: ["minor", "patch"]
+# <<< STACK:react
+# >>> STACK:template
+  # Repo-root uv project — the TEMPLATE's own tooling (its pyproject.toml +
+  # uv.lock). Post-init this manifest is gone (react) or replaced by the
+  # promoted stack's entry rewritten to "/" (python), so init must strip this
+  # block or seeded repos get a dangling/duplicate uv entry at "/".
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "deps"
+    groups:
+      python-dev:
+        update-types: ["minor", "patch"]
+# <<< STACK:template
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        update-types: ["minor", "patch"]
