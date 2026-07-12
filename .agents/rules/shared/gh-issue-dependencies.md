@@ -13,7 +13,7 @@ is not enforceable — readers miss it, boards don't surface it, the kanban won'
 
 ```bash
 # Get node IDs first
-gh api graphql -f query='{ repository(owner:"Gridium", name:"gridium-agent") { issue(number: N) { id } } }'
+gh api graphql -f query='{ repository(owner:"<owner>", name:"<repo>") { issue(number: N) { id } } }'
 
 # Add the blocked-by (arg is blockingIssueId; payload field is blockingIssue)
 gh api graphql -f query='
@@ -35,10 +35,10 @@ human issue number. Passing the issue number silently matches an unrelated issue
 from another repo with that database ID. Always fetch it first:
 
 ```bash
-DB_ID=$(gh api repos/Gridium/gridium-agent/issues/{number} --jq '.id')
-gh api repos/Gridium/gridium-agent/issues/{target}/dependencies/blocked_by -X POST -F issue_id=$DB_ID
+DB_ID=$(gh api repos/<owner>/<repo>/issues/{number} --jq '.id')
+gh api repos/<owner>/<repo>/issues/{target}/dependencies/blocked_by -X POST -F issue_id=$DB_ID
 # DELETE uses the database ID in the path too:
-gh api repos/Gridium/gridium-agent/issues/{target}/dependencies/blocked_by/$DB_ID -X DELETE
+gh api repos/<owner>/<repo>/issues/{target}/dependencies/blocked_by/$DB_ID -X DELETE
 ```
 
 ## Always
