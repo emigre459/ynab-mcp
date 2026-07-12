@@ -1,6 +1,6 @@
 # Make `.agents/skills/` harness-agnostic — design
 
-**Issue:** [#4 — Make .agents/skills/ harness-agnostic (drop Claude-Code-only path assumptions)](https://github.com/Gridium/agentic-ai-powered-repo/issues/4)
+**Issue:** #4 — Make .agents/skills/ harness-agnostic (drop Claude-Code-only path assumptions)
 **Date:** 2026-07-03
 **Status:** Approved (brainstorming) → ready for implementation plan
 
@@ -112,7 +112,7 @@ section (currently lines ~62-65).
 
 ## Out of scope
 
-- Untracked `.validation-result.json` artifacts (local scratch; stale `gridium-agent`
+- Untracked `.validation-result.json` artifacts (local scratch; stale
   path; not git-tracked).
 - The ~27 inline tool-name references (kept per §2; covered by the rule).
 - Rewriting portable frontmatter (§3).

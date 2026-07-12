@@ -1,6 +1,6 @@
 ---
 name: clean-up-kanban
-description: Kanban hygiene + board-review playbook for the repo's GitHub Project board. Use when running a full or partial board review ("clean up the kanban", "review our issues", "is the board stale?"), when adopting orphaned issues into epics, when writing or refreshing an EPIC body, or when plan-issues / build-from-issue delegate here for the epic-body template and staleness rules. Encodes the board conventions (epic template with product outcome + lifecycle stage, three-bucket review, close-don't-delete, amendment blocks, Stage field) — originated in gridium-agent's 2026-07-07 full-board review.
+description: Kanban hygiene + board-review playbook for the repo's GitHub Project board. Use when running a full or partial board review ("clean up the kanban", "review our issues", "is the board stale?"), when adopting orphaned issues into epics, when writing or refreshing an EPIC body, or when plan-issues / build-from-issue delegate here for the epic-body template and staleness rules. Encodes the board conventions (epic template with product outcome + lifecycle stage, three-bucket review, close-don't-delete, amendment blocks, Stage field) — originated in a 2026-07-07 full-board review.
 ---
 
 # Clean Up Kanban
@@ -20,7 +20,7 @@ The board decays in four ways, and this skill is the countermeasure for each:
 
 This skill READS broadly and WRITES only with per-item user approval (same approval discipline as plan-issues Phase 4). It never deletes — closure-with-comment only.
 
-**Origin case study (gridium-agent, 2026-07-07):** 35 orphans existed; zero carried the `/plan-issues` footer — orphaning is caused by hand-filed cards, not by skill failure. Hence §4's standing sweep rather than a one-time fix.
+**Origin case study (2026-07-07):** 35 orphans existed; zero carried the `/plan-issues` footer — orphaning is caused by hand-filed cards, not by skill failure. Hence §4's standing sweep rather than a one-time fix.
 
 ## §1 The epic-body template (the load-bearing artifact)
 

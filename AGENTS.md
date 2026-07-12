@@ -1,4 +1,4 @@
-# AI Agent Instructions — {{PROJECT_NAME}}
+# AI Agent Instructions — ynab-mcp
 
 > This file is the single source of truth for AI assistants working in this repository.
 > Shared cross-cutting rules live in `.agents/rules/` and are NOT duplicated here — treat them as authoritative for their declared scopes.
@@ -22,28 +22,16 @@ Each rule is a Markdown file with frontmatter:
 |------|-----------|---------|
 | `.agents/rules/shared/push-every-commit.md` | always | Push to origin after EVERY commit (`-u` on the first) — the remote branch is the in-flight signal build-from-issue Step 0/11b and parallel sessions read |
 | `.agents/rules/shared/*.md` | always / varies | Git, commit, issue-workflow, and meta conventions — read the directory |
-<!-- STACK:python -->
 | `.agents/rules/python/uv-python.md` | always | Use `uv` for all Python execution and dependency management |
 | `.agents/rules/python/python-best-practices.md` | `**/*.py` | Style, type hints, TDD, API design, docstrings |
 | `.agents/rules/python/*.md` (others) | varies | dotenv loading, library-vs-scripts structure |
-<!-- /STACK:python -->
-<!-- STACK:react -->
-| `.agents/rules/react/bun-react.md` | always | Use `bun` for all JS/TS execution and dependency management |
-| `.agents/rules/react/react-best-practices.md` | `**/*.{ts,tsx}` | Components, hooks, Biome/Vitest/tsc conventions |
-<!-- /STACK:react -->
 
 ## Project Overview
 
-{{DESCRIPTION}}
+MCP server for YNAB
 
-<!-- STACK:python -->
 This is a **Python backend** project managed with `uv`. Source lives in `src/`,
 tests in `tests/`. All quality gates run through the `Makefile`.
-<!-- /STACK:python -->
-<!-- STACK:react -->
-This is a **React + TypeScript frontend** project built with Vite and managed with
-`bun`. Source lives in `src/`. All quality gates run through the `Makefile`.
-<!-- /STACK:react -->
 
 ## Quality Gates
 

@@ -19,7 +19,7 @@ review until someone installs + enables it.
 **How to apply:** Detect the mode once per PR (see `resolve-pr-concerns` Step 1a)
 and act accordingly:
 
-- **Automatic mode (the Gridium default once Cursor is installed):** the push
+- **Automatic mode (the default once Cursor is installed and enabled):** the push
   already triggered a fresh review. **Do NOT comment `bugbot run`** — it's a
   redundant double-trigger that just clutters the PR. Wait for the auto-review.
 - **Manual mode:** comment `bugbot run` after pushing fixes, since nothing else

@@ -5,20 +5,12 @@ on:
     branches: [main]
   pull_request:
 
-# >>> STACK:template
-# Each stack runs lint / tests / security as separate parallel jobs. Job ids
-# carry a stack prefix because both stacks coexist pre-init (duplicate job ids
-# are invalid YAML); `make init` strips the kept stack's prefix so seeded repos
-# get plain `lint` / `tests` / `security` jobs matching the
-# required_status_checks contexts it writes into ruleset.json.
-# <<< STACK:template
 jobs:
-# >>> STACK:python
-  python-lint:
+  lint:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: stacks/python
+        working-directory: .
     steps:
       - uses: actions/checkout@v7
       - name: Read Python version
@@ -31,11 +23,11 @@ jobs:
       - run: make deps
       - run: make lint
 
-  python-tests:
+  tests:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: stacks/python
+        working-directory: .
     steps:
       - uses: actions/checkout@v7
       - name: Read Python version
@@ -48,11 +40,11 @@ jobs:
       - run: make deps
       - run: make coverage
 
-  python-security:
+  security:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: stacks/python
+        working-directory: .
     steps:
       - uses: actions/checkout@v7
       - name: Read Python version
@@ -64,58 +56,3 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: make deps
       - run: make security
-# <<< STACK:python
-# >>> STACK:react
-  react-lint:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: stacks/react
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      - run: make deps
-      - run: make lint
-
-  react-tests:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: stacks/react
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      - run: make deps
-      - run: make coverage
-
-  react-security:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: stacks/react
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      - run: make deps
-      - run: make security
-# <<< STACK:react
-# >>> STACK:template
-  # Not a deployable stack — this job checks the TEMPLATE's own machinery (the
-  # init/apply scripts + tests/template that build new repos). It exists only
-  # pre-init; `make init` strips this whole marker block from the spawned repo.
-  template:
-    name: template machinery (lint + tests)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Read Python version
-        id: pyver
-        run: echo "value=$(cat .python-version)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ steps.pyver.outputs.value }}
-      - uses: astral-sh/setup-uv@v7
-      - run: make tooling_deps
-      - run: make machinery_lint
-      - run: make machinery_tests
-# <<< STACK:template

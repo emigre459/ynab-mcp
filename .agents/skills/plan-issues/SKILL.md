@@ -36,14 +36,13 @@ fuzzy idea / problem domain
 * Planning dialogue tuned to issue-level decisions.
 * Per-card approval (creation, amendment, closure).
 * GitHub materialization (issue create, blocked-by wiring, epic nesting, project attachment, closure with explanatory comments).
-* Cross-tracker routing to Jira for Gridium MCP server-side work (see Phase 2).
 
 **What this skill explicitly does NOT do:**
 
 * Spec writing or design docs. That belongs in `/build-from-issue`.
 * Code edits. Same.
 * Deletion of any GitHub artifact. Closure-with-comment only — see "Rule enforcement."
-* Cross-*repo* GitHub planning. The skill operates on whatever repo is auto-detected from CWD. (Cross-*tracker* — i.e., GitHub + Jira — IS in scope; see Phase 2.)
+* Cross-*repo* GitHub planning. The skill operates on whatever repo is auto-detected from CWD.
 
 **Announce at start:** "Using the plan-issues skill to plan work at the kanban-issue level."
 
@@ -52,7 +51,6 @@ fuzzy idea / problem domain
 | File | Contents | When to consult |
 |------|----------|-----------------|
 | `../clean-up-kanban/SKILL.md` | Board-hygiene playbook: the epic-body template (product outcome + lifecycle stage + drainable execution order), three-bucket staleness review, duplicate hunt, orphan adoption, amendment/closure/batch-materialization discipline | **Read EARLY — right after Phase 1.** It owns the epic-body template Phase 5 writes, the duplicate-hunt discipline behind Phase 3 step 0, and the staleness rules the Phase 3 scan applies. |
-| `references/gridium-mcp-routing.md` | Cross-tracker routing rules for Gridium MCP server work (gridium-agent ↔ Jira GRID-10964) | Phase 2, when any candidate card might touch the Gridium MCP server. Skip when running in a non-gridium-agent repo. |
 
 ## Delegations
 
@@ -60,7 +58,6 @@ fuzzy idea / problem domain
 * **Library-doc lookups during planning** → `context7-mcp` whenever a proposed acceptance criterion depends on a third-party library API. For any spec section depending on a third-party library API, fetch current docs *before* drafting; don't conflate general knowledge with current specifics.
 * **End-of-session worktree disposal** → `superpowers:finishing-a-development-branch` or `/clean_gone` (manual, after the session).
 * **GitHub CLI / API** → `gh` for issues, project boards, labels; `gh api` for the dependencies endpoint and any beta surfaces (sub-issues).
-* **Jira (for Gridium MCP server-side work)** → `mcp__plugin_atlassian_atlassian__createJiraIssue`. See "Gridium MCP cross-tracker routing" in Phase 2.
 * **User decisions** → `AskUserQuestion` for every irreversible action (epic creation, card creation, closure approval, new-label creation).
 
 ## Core rules (encoded directly — read these first)
@@ -185,12 +182,6 @@ Repo: <owner>/<repo>   Project: <name> (#<number>)
 
 Followed by a terse listing of epics (one line each: `#<num> <title>`) and related issues (same).
 
-#### Gridium MCP cross-tracker routing (gridium-agent ↔ Jira GRID-10964)
-
-If this skill is running in `Gridium/gridium-agent` AND any candidate card might touch the Gridium MCP server (https://mcp.gridium.com), consult `references/gridium-mcp-routing.md` before drafting. That file holds the classification rules (server-side → Jira GRID-10964; client-side → GitHub gridium-agent; coordinated → twin-card pattern), the materialization recipe for Phase 5, and the don'ts.
-
-Surface the routing in the Phase 2 summary if any candidate card smells server-side, so the user sees it before per-card approvals. Skip this entire section when running in any other repo.
-
 ### Phase 3 — Dialogue + staleness scan
 
 Use `AskUserQuestion` for each focused question, one at a time, multi-choice when possible:
@@ -200,7 +191,6 @@ Use `AskUserQuestion` for each focused question, one at a time, multi-choice whe
 3. **Acceptance criteria** per proposed card: terse bullets, max ~5 items, written in the present tense ("X is implemented and tested"). Ask the user to validate each card's acceptance bullets before moving on.
 4. **Blocked-by relationships:** for each card, which existing issues block it, and which other proposed cards block it? Capture both kinds of edges.
 5. **Labels:** offer from the session's live-fetched list. If nothing fits, ask via `AskUserQuestion`: "create new label `<name>`?" If yes, `gh label create` and refresh the in-memory list. If no, drop the label or pick another.
-6. **Tracker classification (if Gridium MCP work is in play):** for each proposed card, classify per the Phase 2 routing — "this GitHub kanban" or "Jira under GRID-10964". Surface the classification in the draft so Phase 4 approval covers the routing decision too.
 
 **Staleness scan** (must run before Phase 4):
 
@@ -220,7 +210,6 @@ Two parallel approval loops, run consecutively.
 ```
 [Draft] #<n> of <total>
 Title: <terse title>
-Tracker: <GitHub Gridium/gridium-agent | Jira GRID-10964>   ← only show when MCP routing applies
 Parent epic: <epic title or "(new epic: <title>)" or "(none — justification: …)">
 Labels: <l1>, <l2>
 Blocked by: <list of issue numbers or other draft cards>
@@ -255,7 +244,7 @@ If Yes, optionally prompt for one-line additional context the user wants in the 
 
 Order of operations matters — do the structural pieces first, then wire dependencies, then close.
 
-1. **Create the new epic (if any) — with the would-be-epic guard.** If the user proposed a new epic in Phase 3, first count how many cards will ACTUALLY nest under it this session: GitHub-tracker cards being created in step 2 **plus** existing issues approved for re-homing under it in this plan — cards that never nest here (e.g. Jira-routed twins) do NOT count. **If the count is exactly one, do NOT create the epic** — apply the would-be-epic escape hatch: skip epic creation, and in step 2 include `Would-be epic: <title>` in that card's body at creation time (it stays unparented; step 4 skips it); the clean-up-kanban orphan sweep mints the epic when a second member appears. (Create a 1-member epic only on the user's explicit insistence.) **If the count is zero**, do NOT create the epic either — nothing would nest under it. Say WHY to the user, matched to the cause: every member routed to another tracker → a wrong-home signal (the concept lives there); members were dropped or re-homed to existing epics during approval → the epic proposal is moot this session (note it as a `Would-be epic:` on any surviving card that still wants it). For epics with ≥2 actually-nesting members, create the epic first. A new epic MUST get the `EPIC` label (the canonical discovery signal) AND an `[EPIC] ` title prefix — both, every time. **Normalize the prefix:** prepend `[EPIC] ` only if the approved title doesn't already start with it (case-insensitive), so an already-prefixed title isn't doubled into `[EPIC] [EPIC] …`:
+1. **Create the new epic (if any) — with the would-be-epic guard.** If the user proposed a new epic in Phase 3, first count how many cards will ACTUALLY nest under it this session: cards being created in step 2 **plus** existing issues approved for re-homing under it in this plan. **If the count is exactly one, do NOT create the epic** — apply the would-be-epic escape hatch: skip epic creation, and in step 2 include `Would-be epic: <title>` in that card's body at creation time (it stays unparented; step 4 skips it); the clean-up-kanban orphan sweep mints the epic when a second member appears. (Create a 1-member epic only on the user's explicit insistence.) **If the count is zero**, do NOT create the epic either — nothing would nest under it. Say WHY to the user, matched to the cause: members were dropped or re-homed to existing epics during approval → the epic proposal is moot this session (note it as a `Would-be epic:` on any surviving card that still wants it). For epics with ≥2 actually-nesting members, create the epic first. A new epic MUST get the `EPIC` label (the canonical discovery signal) AND an `[EPIC] ` title prefix — both, every time. **Normalize the prefix:** prepend `[EPIC] ` only if the approved title doesn't already start with it (case-insensitive), so an already-prefixed title isn't doubled into `[EPIC] [EPIC] …`:
    ```bash
    gh issue create --repo <owner>/<repo> --title "[EPIC] <epic title>" \
      --body "<epic body>" --label EPIC [--label <other>]…
@@ -266,7 +255,7 @@ Order of operations matters — do the structural pieces first, then wire depend
    ```
    **Write the `<epic body>` per the clean-up-kanban §1 template** — the epic body IS the cross-child map `/build-from-issue` reads for meta-context: `## Product outcome` (customer value + **lifecycle stage: 0 — POC / 1 — Hardening / 2 — Later** + drainable-vs-index posture), `## Foundation` (merged decisions children must not reopen), `## The story` (each child's one-line role + blockers + sequential/parallel execution order), `## End-state` (what "drained" observably looks like). If the Project board has a `Stage` single-select field, set it on the epic item after attaching.
 
-2. **Create child cards.** For each approved card in Loop A whose tracker is GitHub (for a card under ANY step-1 would-be-epic decision — the one-member hatch OR the zero-count moot path — append `Would-be epic: <title>` to its body BEFORE this create call; for an EXISTING surviving issue on the zero-count path, append the marker via `gh issue edit` now — the marker always lands on the board, never as an afterthought):
+2. **Create child cards.** For each approved card in Loop A (for a card under ANY step-1 would-be-epic decision — the one-member hatch OR the zero-count moot path — append `Would-be epic: <title>` to its body BEFORE this create call; for an EXISTING surviving issue on the zero-count path, append the marker via `gh issue edit` now — the marker always lands on the board, never as an afterthought):
    ```bash
    gh issue create --repo <owner>/<repo> --title "<title>" \
      --body "<body>" --label <l1> --label <l2>…
@@ -302,9 +291,7 @@ Order of operations matters — do the structural pieces first, then wire depend
    gh project item-add <project-number> --owner <org> --url <issue-url>
    ```
 
-6. **Materialize Jira-routed cards (if any from Phase 2/3 classification).** For each card classified as server-side under GRID-10964, follow the materialization recipe in `references/gridium-mcp-routing.md` (Atlassian MCP createJiraIssue call + bidirectional link verification). The reference owns the exact arguments and the cross-link checklist.
-
-7. **Close approved-for-closure issues.** For each issue approved in Loop B:
+6. **Close approved-for-closure issues.** For each issue approved in Loop B:
    ```bash
    gh issue comment <n> --body "<reason + link(s) to superseding cards>"
    gh issue close <n>
@@ -358,7 +345,6 @@ Quick reference for the commands this skill runs, in the order they typically ap
 | Attach to project | `gh project item-add <p> --owner <o> --url <url>` | One call per issue |
 | Comment | `gh issue comment <n> --body <b>` | Required precursor to close |
 | Close | `gh issue close <n>` | NEVER `gh issue delete` |
-| Create Jira card | `mcp__plugin_atlassian_atlassian__createJiraIssue(...)` | Only for Gridium MCP server-side work |
 
 ## Rule enforcement map
 
@@ -373,7 +359,6 @@ Quick reference for the commands this skill runs, in the order they typically ap
 | Fail hard, don't warn+fallback | All | Every `gh`/`gh api` exit code is checked. Failures stop the skill immediately and surface the actual stderr. |
 | Fetch library docs first | 3 (conditional) | If an acceptance criterion references a third-party library API, invoke `context7-mcp` before drafting that criterion. |
 | Never delete, only close | 5 | The skill has no codepath that calls `gh issue delete` or the REST DELETE endpoint. Closure pairs `gh issue comment` (reason) with `gh issue close`. |
-| Gridium MCP routing | 2 + 5 | Server-side work → Jira GRID-10964 via Atlassian MCP. Client-side work → GitHub gridium-agent. Twin-card pattern with bidirectional links verified before step completes. |
 
 ## Edge cases & failure modes
 
@@ -386,7 +371,6 @@ Quick reference for the commands this skill runs, in the order they typically ap
 * Any 4xx/5xx from the dependencies API → stop at Phase 5, report which dependency edge failed and the issue numbers involved.
 * Verification readback shows expected ID missing → stop at Phase 5, same.
 * `gh issue close` fails after `gh issue comment` succeeded → stop, surface both facts.
-* Jira create call fails for a routed card → stop, surface stderr; the GH twin (if any) is already created and is not rolled back.
 
 **Graceful degradation** (warn once, continue):
 
@@ -414,7 +398,7 @@ Worktree stays alive; user fixes manually or re-invokes the skill on a smaller s
 
 Explicit non-goals — surface these to the user if a request brushes against them, don't quietly do them:
 
-* **Cross-repo planning** (multiple GitHub repos in one session). The skill operates on the auto-detected GitHub repo only. If the user wants issues in another GitHub repo, they should re-run the skill from that repo's checkout. **Exception:** cross-*tracker* routing (GitHub + Jira for Gridium MCP work) IS in scope — see Phase 2.
+* **Cross-repo planning** (multiple GitHub repos in one session). The skill operates on the auto-detected GitHub repo only. If the user wants issues in another GitHub repo, they should re-run the skill from that repo's checkout.
 * **Deletion of any GitHub artifact.** Closure-with-comment only.
 * **Effort estimation, point assignment, sprint planning.** Out of layer — those are kanban-tooling concerns, not issue-content concerns.
 * **Owner / assignee assignment.** The skill can suggest, but doesn't `gh issue edit --add-assignee` without explicit `AskUserQuestion` approval per assignee.
@@ -432,7 +416,6 @@ Explicit non-goals — surface these to the user if a request brushes against th
 | Label not in session list | `AskUserQuestion` → create or pick alternative. |
 | Possible duplicate detected | Chat broadly first; per-issue Yes/No before any closure. |
 | Stale issue detected | Same — Yes/No per item; closure pairs comment + close. |
-| MCP server-side work proposed | Route to Jira GRID-10964 with twin-card pattern. |
 | `gh` command fails | Fail hard; surface stderr. Don't silently retry or continue. |
 | Sub-issues API 404 | Fall back to task-list checkboxes in the epic body. |
 | User invokes mid-session (not at start) | Skill is idempotent — handles smart-force the same way. |
@@ -450,8 +433,6 @@ Explicit non-goals — surface these to the user if a request brushes against th
 * Use a label that's not in the session's live-fetched list without `AskUserQuestion` approval to create it.
 * Auto-close an issue without per-issue user approval.
 * Write a spec doc or design doc to disk — that belongs inside `/build-from-issue`.
-* File MCP server-side work as a GitHub issue in gridium-agent (it belongs on Jira GRID-10964).
-* Drop the bidirectional link between a GitHub twin and its Jira card.
 
 **Always:**
 

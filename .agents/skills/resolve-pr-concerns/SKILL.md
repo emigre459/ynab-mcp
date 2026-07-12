@@ -23,7 +23,7 @@ This skill exists because PRs accumulate signal from multiple sources (bots, hum
 - Cursor Bugbot / Copilot / dependabot / renovate enumeration commands
 - Loop guards (iteration counter, fingerprint-based oscillation detection)
 - CI-failure triage: OIDC App-token / `pull_request_target` workflow trap, fork-secrets unavailability, flaky external API treatment
-- `bugbot run` re-trigger as the mandatory closing step
+- `bugbot run` re-trigger as the closing step, when Bugbot is installed and enabled on the repo (see Step 1a/1b for detection and the no-bot fallback)
 - `wait_for_pr_checks.sh` orchestration with terminal-state polling
 - Final user-facing status summary
 
@@ -148,7 +148,7 @@ Surface the detected mode to the user in one line ("Bugbot auto-runs on push her
 
 ### Step 1b (optional). Pre-pass code review when no bots are configured
 
-If the repo has no automated PR reviewers configured (no Cursor Bugbot, no Copilot review, no equivalent), invoke `superpowers:requesting-code-review` to dispatch a fresh reviewer subagent against the PR's SHA range before enumerating. Skip this on Gridium repos — bugbot and Copilot review are configured. Only relevant for repos lacking bot review.
+If the repo has no automated PR reviewers configured (no Cursor Bugbot, no Copilot review, no equivalent), invoke `superpowers:requesting-code-review` to dispatch a fresh reviewer subagent against the PR's SHA range before enumerating. Detect this per repo — don't assume bot review is configured; a freshly bootstrapped repo typically has none until Bugbot/Copilot are explicitly installed and enabled.
 
 ## Step 2: Enumerate concerns
 
@@ -382,7 +382,7 @@ End with a short status summary:
 |---------|-----|
 | Treating every concern as simple → aggressive auto-fixes diverging from user intent | Default to AskUserQuestion when there's any judgment involved; apply `superpowers:receiving-code-review` discipline first |
 | Implementing reviewer suggestions without verifying they're correct for the codebase | Wrap every concern in `superpowers:receiving-code-review`'s verify-before-implement pass — including the "simple" ones |
-| Skipping `bugbot run` re-trigger after fixes | It's the last step — never skip; new code → new review |
+| Skipping `bugbot run` re-trigger after fixes, when Bugbot is actually enabled in manual mode | It's the last step in that case — never skip; new code → new review |
 | Folding in a major-version dependency bump without checking the diff | Always run `gh pr diff` before applying a dep PR locally |
 | Treating a red CI check as "noise" without reading the log | Run `gh run view --log-failed` on every failure; classify infra vs code; fix or escalate |
 | Bumping a workflow file that uses OIDC → App token (claude-code-review, claude) inside a PR | Revert that workflow change from the PR; ask the user to land it on the default branch directly |
