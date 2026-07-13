@@ -3,8 +3,11 @@
 from datetime import date
 
 import ynab
+from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
+from ynab_mcp.client import resolve_budget_id
+from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 from ynab_mcp.tools.months import parse_month
 
@@ -227,3 +230,39 @@ def flag_category_spend(
             }
         )
     return flags
+
+
+def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
+    """Register the spend-analysis tools on ``mcp``.
+
+    Parameters
+    ----------
+    mcp : fastmcp.FastMCP
+        The server to register the tools on.
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    settings : Settings
+        The server's parsed configuration, used to resolve a default budget
+        id when the caller omits one.
+    """
+
+    @mcp.tool(name="flag-category-spend")
+    def flag_category_spend_tool(
+        month: str, threshold: float = 0.10, budget_id: str | None = None
+    ) -> list[dict[str, object]]:
+        """Flag categories whose spend is beyond threshold of budgeted for a month.
+
+        Parameters
+        ----------
+        month : str
+            An ISO-formatted month (e.g. ``"2024-01-01"``) or the literal
+            string ``"current"``.
+        threshold : float, optional
+            Fraction of the budgeted amount beyond which spend is flagged,
+            by default ``0.10``.
+        budget_id : str | None, optional
+            The YNAB budget id, by default ``None`` (falls back to
+            ``YNAB_DEFAULT_BUDGET_ID``).
+        """
+        resolved_budget_id = resolve_budget_id(budget_id, settings)
+        return flag_category_spend(client, resolved_budget_id, month, threshold)
