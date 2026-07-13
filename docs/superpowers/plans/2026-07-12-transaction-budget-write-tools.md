@@ -452,14 +452,18 @@ Create `tests/test_tools_scheduled_transactions.py`:
 ```python
 """Tests for ynab_mcp.tools.scheduled_transactions."""
 
+import asyncio
 from datetime import date
 from types import SimpleNamespace
 
 import ynab
+from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from pytest import raises
 from pytest_mock import MockerFixture
 
+from ynab_mcp.config import Settings
+from ynab_mcp.tools import scheduled_transactions
 from ynab_mcp.tools.scheduled_transactions import (
     create_scheduled_transaction,
     delete_scheduled_transaction,
@@ -598,6 +602,193 @@ def test_delete_scheduled_transaction_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Scheduled transaction not found"):
         delete_scheduled_transaction(client, "budget-1", "missing-st")
+
+
+def _build_registered_server(settings: Settings) -> FastMCP:
+    """Build a minimal FastMCP server with only manage-scheduled-transaction registered."""
+    mcp = FastMCP("test")
+    scheduled_transactions.register(mcp, object(), settings)
+    return mcp
+
+
+def test_manage_scheduled_transaction_tool_dispatches_create(
+    mocker: MockerFixture,
+) -> None:
+    """The create operation calls create_scheduled_transaction with the args."""
+    settings = Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+    mcp = _build_registered_server(settings)
+    create_mock = mocker.patch(
+        "ynab_mcp.tools.scheduled_transactions.create_scheduled_transaction",
+        return_value=SimpleNamespace(
+            model_dump=lambda mode="json": {"id": "st1"}
+        ),
+    )
+
+    async def _call() -> dict[str, object]:
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "manage-scheduled-transaction",
+                {
+                    "operation": "create",
+                    "account_id": "acct-1",
+                    "date": "2024-03-01",
+                    "amount": -50000,
+                    "frequency": "monthly",
+                },
+            )
+            return result.data
+
+    result = asyncio.run(_call())
+
+    assert result == {"id": "st1"}
+    create_mock.assert_called_once_with(
+        mocker.ANY,
+        "budget-1",
+        "acct-1",
+        date(2024, 3, 1),
+        -50000,
+        "monthly",
+        payee_id=None,
+        payee_name=None,
+        category_id=None,
+        memo=None,
+        flag_color=None,
+    )
+
+
+def test_manage_scheduled_transaction_tool_dispatches_update(
+    mocker: MockerFixture,
+) -> None:
+    """The update operation calls update_scheduled_transaction with the args."""
+    settings = Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+    mcp = _build_registered_server(settings)
+    update_mock = mocker.patch(
+        "ynab_mcp.tools.scheduled_transactions.update_scheduled_transaction",
+        return_value=SimpleNamespace(
+            model_dump=lambda mode="json": {"id": "st1"}
+        ),
+    )
+
+    async def _call() -> dict[str, object]:
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "manage-scheduled-transaction",
+                {
+                    "operation": "update",
+                    "scheduled_transaction_id": "st1",
+                    "account_id": "acct-1",
+                    "date": "2024-03-01",
+                    "amount": -60000,
+                    "frequency": "monthly",
+                },
+            )
+            return result.data
+
+    result = asyncio.run(_call())
+
+    assert result == {"id": "st1"}
+    update_mock.assert_called_once_with(
+        mocker.ANY,
+        "budget-1",
+        "st1",
+        "acct-1",
+        date(2024, 3, 1),
+        -60000,
+        "monthly",
+        payee_id=None,
+        payee_name=None,
+        category_id=None,
+        memo=None,
+        flag_color=None,
+    )
+
+
+def test_manage_scheduled_transaction_tool_dispatches_delete(
+    mocker: MockerFixture,
+) -> None:
+    """The delete operation calls delete_scheduled_transaction with the args."""
+    settings = Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+    mcp = _build_registered_server(settings)
+    delete_mock = mocker.patch(
+        "ynab_mcp.tools.scheduled_transactions.delete_scheduled_transaction",
+        return_value=SimpleNamespace(
+            model_dump=lambda mode="json": {"id": "st1", "deleted": True}
+        ),
+    )
+
+    async def _call() -> dict[str, object]:
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "manage-scheduled-transaction",
+                {"operation": "delete", "scheduled_transaction_id": "st1"},
+            )
+            return result.data
+
+    result = asyncio.run(_call())
+
+    assert result == {"id": "st1", "deleted": True}
+    delete_mock.assert_called_once_with(mocker.ANY, "budget-1", "st1")
+
+
+def test_manage_scheduled_transaction_tool_rejects_create_without_required_fields(
+    mocker: MockerFixture,
+) -> None:
+    """create without account_id/date/amount/frequency raises before dispatch."""
+    settings = Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+    mcp = _build_registered_server(settings)
+    create_mock = mocker.patch(
+        "ynab_mcp.tools.scheduled_transactions.create_scheduled_transaction"
+    )
+
+    async def _call() -> None:
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "manage-scheduled-transaction", {"operation": "create"}
+            )
+
+    with raises(
+        ToolError, match="create requires account_id, date, amount, and frequency"
+    ):
+        asyncio.run(_call())
+    create_mock.assert_not_called()
+
+
+def test_manage_scheduled_transaction_tool_rejects_update_without_id(
+    mocker: MockerFixture,
+) -> None:
+    """update without scheduled_transaction_id raises before dispatch."""
+    settings = Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+    mcp = _build_registered_server(settings)
+    update_mock = mocker.patch(
+        "ynab_mcp.tools.scheduled_transactions.update_scheduled_transaction"
+    )
+
+    async def _call() -> None:
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "manage-scheduled-transaction",
+                {
+                    "operation": "update",
+                    "account_id": "acct-1",
+                    "date": "2024-03-01",
+                    "amount": -60000,
+                    "frequency": "monthly",
+                },
+            )
+
+    with raises(ToolError, match="update requires scheduled_transaction_id"):
+        asyncio.run(_call())
+    update_mock.assert_not_called()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -925,7 +1116,7 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_tools_scheduled_transactions.py -v --tb=short`
-Expected: PASS (6 tests).
+Expected: PASS (11 tests).
 
 - [ ] **Step 5: Lint and commit**
 
@@ -957,13 +1148,17 @@ Create `tests/test_tools_budgeted_amount.py`:
 ```python
 """Tests for ynab_mcp.tools.budgeted_amount."""
 
+import asyncio
 from types import SimpleNamespace
 
 import ynab
+from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from pytest import raises
 from pytest_mock import MockerFixture
 
+from ynab_mcp.config import Settings
+from ynab_mcp.tools import budgeted_amount
 from ynab_mcp.tools.budgeted_amount import assign_budgeted_amount, move_budgeted_amount
 
 
@@ -1114,6 +1309,134 @@ def test_move_budgeted_amount_reports_failed_rollback(mocker: MockerFixture) -> 
         move_budgeted_amount(
             client, "budget-1", "current", "from-cat", "missing-cat", 20000
         )
+
+
+def _build_registered_server(settings: Settings) -> FastMCP:
+    """Build a minimal FastMCP server with only manage-budgeted-amount registered."""
+    mcp = FastMCP("test")
+    budgeted_amount.register(mcp, object(), settings)
+    return mcp
+
+
+def test_manage_budgeted_amount_tool_dispatches_assign(mocker: MockerFixture) -> None:
+    """The assign operation calls assign_budgeted_amount with the args."""
+    settings = Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+    mcp = _build_registered_server(settings)
+    assign_mock = mocker.patch(
+        "ynab_mcp.tools.budgeted_amount.assign_budgeted_amount",
+        return_value=SimpleNamespace(
+            model_dump=lambda mode="json": {"id": "cat-1", "budgeted": 50000}
+        ),
+    )
+
+    async def _call() -> dict[str, object]:
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "manage-budgeted-amount",
+                {
+                    "operation": "assign",
+                    "month": "current",
+                    "category_id": "cat-1",
+                    "amount": 50000,
+                },
+            )
+            return result.data
+
+    result = asyncio.run(_call())
+
+    assert result == {"id": "cat-1", "budgeted": 50000}
+    assign_mock.assert_called_once_with(
+        mocker.ANY, "budget-1", "current", "cat-1", 50000
+    )
+
+
+def test_manage_budgeted_amount_tool_dispatches_move(mocker: MockerFixture) -> None:
+    """The move operation calls move_budgeted_amount with the args."""
+    settings = Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+    mcp = _build_registered_server(settings)
+    move_mock = mocker.patch(
+        "ynab_mcp.tools.budgeted_amount.move_budgeted_amount",
+        return_value={
+            "from_category": SimpleNamespace(
+                model_dump=lambda mode="json": {"id": "from-cat", "budgeted": 80000}
+            ),
+            "to_category": SimpleNamespace(
+                model_dump=lambda mode="json": {"id": "to-cat", "budgeted": 40000}
+            ),
+        },
+    )
+
+    async def _call() -> dict[str, object]:
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "manage-budgeted-amount",
+                {
+                    "operation": "move",
+                    "month": "current",
+                    "from_category_id": "from-cat",
+                    "to_category_id": "to-cat",
+                    "amount": 20000,
+                },
+            )
+            return result.data
+
+    result = asyncio.run(_call())
+
+    assert result == {
+        "from_category": {"id": "from-cat", "budgeted": 80000},
+        "to_category": {"id": "to-cat", "budgeted": 40000},
+    }
+    move_mock.assert_called_once_with(
+        mocker.ANY, "budget-1", "current", "from-cat", "to-cat", 20000
+    )
+
+
+def test_manage_budgeted_amount_tool_rejects_assign_without_required_fields(
+    mocker: MockerFixture,
+) -> None:
+    """assign without category_id/amount raises before dispatch."""
+    settings = Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+    mcp = _build_registered_server(settings)
+    assign_mock = mocker.patch("ynab_mcp.tools.budgeted_amount.assign_budgeted_amount")
+
+    async def _call() -> None:
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "manage-budgeted-amount", {"operation": "assign", "month": "current"}
+            )
+
+    with raises(ToolError, match="assign requires category_id and amount"):
+        asyncio.run(_call())
+    assign_mock.assert_not_called()
+
+
+def test_manage_budgeted_amount_tool_rejects_move_without_required_fields(
+    mocker: MockerFixture,
+) -> None:
+    """move without from_category_id/to_category_id/amount raises before dispatch."""
+    settings = Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+    mcp = _build_registered_server(settings)
+    move_mock = mocker.patch("ynab_mcp.tools.budgeted_amount.move_budgeted_amount")
+
+    async def _call() -> None:
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "manage-budgeted-amount", {"operation": "move", "month": "current"}
+            )
+
+    with raises(
+        ToolError, match="move requires from_category_id, to_category_id, and amount"
+    ):
+        asyncio.run(_call())
+    move_mock.assert_not_called()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1369,7 +1692,7 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_tools_budgeted_amount.py -v --tb=short`
-Expected: PASS (5 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 5: Lint and commit**
 
