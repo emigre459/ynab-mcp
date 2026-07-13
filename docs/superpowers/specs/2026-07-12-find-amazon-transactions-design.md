@@ -99,6 +99,17 @@ solving a CAPTCHA or approving a device/OTP challenge on first login — somethi
 stdio tool call cannot do mid-request (no interactive terminal reachable from inside a
 tool invocation). So first login is **never** attempted inside a tool call:
 
+**Correction from live testing (2026-07-13):** real Amazon logins commonly present a
+JavaScript-based bot-detection/"ACIC" challenge. The `amazon-orders` library's default
+auth-form chain only *blocks* on this (raising `AmazonOrdersAuthError` with a
+remediation hint) unless the library's Playwright-backed solver forms are explicitly
+registered. `pyproject.toml` now declares `amazon-orders[browser]` (not the bare
+package), and `build_amazon_session()` passes an `AmazonOrdersConfig(data={
+"auth_forms_classes": [...]})` registering `PlaywrightAcicForm` and
+`PlaywrightJSAuthForm`, so `scripts/amazon_login.py` can drive a real (headless)
+browser through the challenge automatically. Requires a one-time
+`uv run playwright install chromium` per machine.
+
 - `scripts/amazon_login.py` is a standalone script (`uv run python scripts/amazon_login.py`)
   that builds an `AmazonSession` from `AmazonSettings.from_env()` and calls `.login()`
   interactively, letting the library persist its session to disk as it normally does.
@@ -243,7 +254,10 @@ when no default budget is configured) — same shape, different condition.
 
 ## Dependencies
 
-`pyproject.toml` gains `amazon-orders` in `[project.dependencies]`.
+`pyproject.toml` gains `amazon-orders[browser]` in `[project.dependencies]` — the
+`[browser]` extra (pulling in `playwright`) is required, not optional, since real
+Amazon logins routinely need it to solve JavaScript-based challenges (see the
+"Correction from live testing" note above).
 
 ## Testing strategy
 

@@ -4,7 +4,13 @@ Run this manually (and again whenever the session expires) so the
 find-amazon-transactions tool can reuse a persisted session without ever
 attempting an interactive login itself:
 
+    uv run playwright install chromium   # one-time per machine
     uv run python scripts/amazon_login.py
+
+Amazon commonly answers a login attempt with a JavaScript-based
+bot-detection or "ACIC" challenge; the `playwright install chromium` step
+provisions the headless browser build_amazon_session() uses to solve it
+automatically.
 """
 
 import sys

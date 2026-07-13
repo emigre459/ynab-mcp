@@ -1,10 +1,22 @@
 """Amazon session construction and order/transaction client factories."""
 
+from amazonorders.conf import AmazonOrdersConfig
 from amazonorders.orders import AmazonOrders
 from amazonorders.session import AmazonSession
 from amazonorders.transactions import AmazonTransactions
 
 from ynab_mcp.config import AmazonSettings
+
+# Amazon commonly answers a login attempt with a JavaScript-based
+# bot-detection or "ACIC" challenge. The library's default auth-form chain
+# only *blocks* on these (raising AmazonOrdersAuthError with a remediation
+# hint) unless these Playwright-backed solvers are explicitly registered --
+# requires the `amazon-orders[browser]` extra and `playwright install
+# chromium`, both declared as hard requirements in pyproject.toml.
+_BROWSER_AUTH_FORMS_CLASSES = [
+    "amazonorders.contrib.browser.playwright.PlaywrightAcicForm",
+    "amazonorders.contrib.browser.playwright.PlaywrightJSAuthForm",
+]
 
 
 def build_amazon_session(settings: AmazonSettings) -> AmazonSession:
@@ -13,7 +25,9 @@ def build_amazon_session(settings: AmazonSettings) -> AmazonSession:
     Deliberately never calls ``.login()`` -- an MCP stdio tool call has no
     way to handle an interactive CAPTCHA/OTP challenge mid-request. The
     session loads any existing persisted cookies automatically; the first
-    login must happen out of band via ``scripts/amazon_login.py``.
+    login must happen out of band via ``scripts/amazon_login.py``, which
+    runs interactively and can drive a real (headless) browser through any
+    JavaScript-based challenge Amazon presents.
 
     Parameters
     ----------
@@ -25,10 +39,14 @@ def build_amazon_session(settings: AmazonSettings) -> AmazonSession:
     amazonorders.session.AmazonSession
         A session that will reuse a previously persisted login, if any.
     """
+    config = AmazonOrdersConfig(
+        data={"auth_forms_classes": _BROWSER_AUTH_FORMS_CLASSES}
+    )
     return AmazonSession(
         username=settings.amazon_username,
         password=settings.amazon_password,
         otp_secret_key=settings.amazon_otp_secret_key,
+        config=config,
     )
 
 

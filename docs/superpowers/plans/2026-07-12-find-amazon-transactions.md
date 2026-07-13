@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - `requires-python = ">=3.13.5,<3.14"` (from `pyproject.toml`) — `amazon-orders` requires only `>=3.9`, so no conflict.
-- Add dependency as `amazon-orders>=4.4.4` (latest on PyPI as of 2026-07-12) in `[project.dependencies]`, not a dev dependency.
+- Add dependency as `amazon-orders[browser]>=4.4.4` (latest on PyPI as of 2026-07-12) in `[project.dependencies]`, not a dev dependency. **Amended 2026-07-13**: the `[browser]` extra (pulling in `playwright`) is required, not optional — real Amazon logins routinely hit a JavaScript-based bot-detection challenge that only the Playwright-backed solver forms can clear; see the `build_amazon_session` correction note below.
 - Every new/modified `src/` and `tests/` file must pass `make lint` (black --check, ruff, mypy with `disallow_untyped_defs=true`) and `make tests`.
 - Numpy-style docstrings on every public function/class, matching the existing `tools/*.py` / `config.py` / `client.py` / `errors.py` style.
 - `scripts/` is **not** covered by `mypy`'s `files = ["src", "tests"]` and has no existing test precedent (see `scripts/apply_repo_settings.py`) — `scripts/amazon_login.py` gets type hints for readability but no dedicated unit test; it's a manual, interactive script.
@@ -57,7 +57,7 @@ to:
 
 ```toml
 dependencies = [
-    "amazon-orders>=4.4.4",
+    "amazon-orders[browser]>=4.4.4",
     "fastmcp>=3.4.4",
     "pydantic>=2.12",
     "python-dotenv>=1.2",
@@ -825,6 +825,7 @@ def test_build_amazon_session_passes_credentials_and_never_logs_in(
 ) -> None:
     """The session is built from settings; .login() is never called here."""
     session_cls = mocker.patch("ynab_mcp.amazon_client.AmazonSession")
+    config_cls = mocker.patch("ynab_mcp.amazon_client.AmazonOrdersConfig")
 
     session = build_amazon_session(_settings())
 
@@ -832,9 +833,34 @@ def test_build_amazon_session_passes_credentials_and_never_logs_in(
         username="user@example.com",
         password="hunter2",
         otp_secret_key="otp-secret",
+        config=config_cls.return_value,
     )
     assert session is session_cls.return_value
     session_cls.return_value.login.assert_not_called()
+
+
+def test_build_amazon_session_registers_browser_challenge_solvers(
+    mocker: MockerFixture,
+) -> None:
+    """AmazonOrdersConfig is built with the Playwright JS-challenge solvers.
+
+    **Added 2026-07-13** after live testing showed Amazon commonly presents
+    a JavaScript-based bot-detection challenge that the library's default
+    auth-form chain only blocks on unless these solvers are registered.
+    """
+    mocker.patch("ynab_mcp.amazon_client.AmazonSession")
+    config_cls = mocker.patch("ynab_mcp.amazon_client.AmazonOrdersConfig")
+
+    build_amazon_session(_settings())
+
+    config_cls.assert_called_once_with(
+        data={
+            "auth_forms_classes": [
+                "amazonorders.contrib.browser.playwright.PlaywrightAcicForm",
+                "amazonorders.contrib.browser.playwright.PlaywrightJSAuthForm",
+            ]
+        }
+    )
 
 
 def test_build_amazon_orders_wraps_session(mocker: MockerFixture) -> None:
@@ -901,6 +927,36 @@ def build_amazon_session(settings: AmazonSettings) -> AmazonSession:
         password=settings.amazon_password,
         otp_secret_key=settings.amazon_otp_secret_key,
     )
+```
+
+**Correction from live testing (2026-07-13):** real Amazon logins commonly present a
+JavaScript-based bot-detection/"ACIC" challenge, which the library's default auth-form
+chain only *blocks* on (raising `AmazonOrdersAuthError` pointing at the `[browser]`
+extra) unless the Playwright-backed solver forms are explicitly registered. The
+`pyproject.toml` dependency became `amazon-orders[browser]>=4.4.4` (not the bare
+package), and `build_amazon_session()` was changed to pass an `AmazonOrdersConfig`
+registering `PlaywrightAcicForm`/`PlaywrightJSAuthForm`:
+
+```python
+from amazonorders.conf import AmazonOrdersConfig
+
+_BROWSER_AUTH_FORMS_CLASSES = [
+    "amazonorders.contrib.browser.playwright.PlaywrightAcicForm",
+    "amazonorders.contrib.browser.playwright.PlaywrightJSAuthForm",
+]
+
+
+def build_amazon_session(settings: AmazonSettings) -> AmazonSession:
+    config = AmazonOrdersConfig(data={"auth_forms_classes": _BROWSER_AUTH_FORMS_CLASSES})
+    return AmazonSession(
+        username=settings.amazon_username,
+        password=settings.amazon_password,
+        otp_secret_key=settings.amazon_otp_secret_key,
+        config=config,
+    )
+```
+
+```python
 
 
 def build_amazon_orders(session: AmazonSession) -> AmazonOrders:

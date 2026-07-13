@@ -23,6 +23,7 @@ def test_build_amazon_session_passes_credentials_and_never_logs_in(
 ) -> None:
     """The session is built from settings; .login() is never called here."""
     session_cls = mocker.patch("ynab_mcp.amazon_client.AmazonSession")
+    config_cls = mocker.patch("ynab_mcp.amazon_client.AmazonOrdersConfig")
 
     session = build_amazon_session(_settings())
 
@@ -30,9 +31,35 @@ def test_build_amazon_session_passes_credentials_and_never_logs_in(
         username="user@example.com",
         password="hunter2",
         otp_secret_key="otp-secret",
+        config=config_cls.return_value,
     )
     assert session is session_cls.return_value
     session_cls.return_value.login.assert_not_called()
+
+
+def test_build_amazon_session_registers_browser_challenge_solvers(
+    mocker: MockerFixture,
+) -> None:
+    """AmazonOrdersConfig is built with the Playwright JS-challenge solvers.
+
+    Real Amazon logins commonly hit a JavaScript-based bot-detection
+    challenge; the library's default auth-form chain only *blocks* on this
+    (raising with a remediation hint) unless these solver classes are
+    explicitly registered via auth_forms_classes.
+    """
+    mocker.patch("ynab_mcp.amazon_client.AmazonSession")
+    config_cls = mocker.patch("ynab_mcp.amazon_client.AmazonOrdersConfig")
+
+    build_amazon_session(_settings())
+
+    config_cls.assert_called_once_with(
+        data={
+            "auth_forms_classes": [
+                "amazonorders.contrib.browser.playwright.PlaywrightAcicForm",
+                "amazonorders.contrib.browser.playwright.PlaywrightJSAuthForm",
+            ]
+        }
+    )
 
 
 def test_build_amazon_orders_wraps_session(mocker: MockerFixture) -> None:
