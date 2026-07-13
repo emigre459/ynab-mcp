@@ -2,13 +2,16 @@
 
 import statistics
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
 from typing import Literal
 
 import ynab
+from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
+from ynab_mcp.client import resolve_budget_id
+from ynab_mcp.config import Settings
 from ynab_mcp.tools.payees import list_payees
 from ynab_mcp.tools.transactions import list_transactions
 
@@ -269,3 +272,36 @@ def find_payee_transactions(
             continue
         summaries.append(_summarize_group(matched, transactions))
     return summaries
+
+
+def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
+    """Register the ``find-payee-transactions`` tool on ``mcp``.
+
+    Parameters
+    ----------
+    mcp : fastmcp.FastMCP
+        The server to register the tool on.
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    settings : Settings
+        The server's parsed configuration, used to resolve a default
+        budget id when the caller omits one.
+    """
+
+    @mcp.tool(name="find-payee-transactions")
+    def find_payee_transactions_tool(
+        payee_query: str, budget_id: str | None = None
+    ) -> list[dict[str, object]]:
+        """Find transaction patterns for payees matching a query.
+
+        Parameters
+        ----------
+        payee_query : str
+            A payee name or substring to search for.
+        budget_id : str | None, optional
+            The YNAB budget id, by default ``None`` (falls back to
+            ``YNAB_DEFAULT_BUDGET_ID``).
+        """
+        resolved_budget_id = resolve_budget_id(budget_id, settings)
+        summaries = find_payee_transactions(client, resolved_budget_id, payee_query)
+        return [asdict(summary) for summary in summaries]
