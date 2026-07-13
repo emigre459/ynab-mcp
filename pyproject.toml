@@ -6,6 +6,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.13.5,<3.14"
 dependencies = [
+    "amazon-orders>=4.4.4",
     "fastmcp>=3.4.4",
     "pydantic>=2.12",
     "python-dotenv>=1.2",
