@@ -37,15 +37,23 @@ def _is_whole_foods_transaction(transaction: Transaction) -> bool:
 def _amount_to_milliunits(grand_total: float) -> int:
     """Convert an Amazon dollar amount into signed YNAB milliunits.
 
-    Amazon charges are outflows, so the result is negative, matching
-    YNAB's sign convention for money leaving an account.
+    The ``amazon-orders`` library already signs ``grand_total`` to match
+    YNAB's own convention: negative for a purchase/charge (an outflow),
+    positive for a refund. No sign flip is needed here -- only unit
+    conversion (dollars to milliunits), routed through a cents-rounding
+    intermediate to avoid float imprecision.
     """
     cents = round(grand_total * 100)
-    return -cents * 10
+    return cents * 10
 
 
 def _lookback_days(since_date: date | None, date_window_days: int) -> int:
-    """Compute how many days of Amazon transaction history to fetch."""
+    """Compute how many days of Amazon transaction history to fetch.
+
+    Note: ``until_date`` is not used to bound this Amazon-side fetch --
+    only ``since_date`` is. When ``since_date`` is unset, the default
+    365-day Amazon lookback may miss older Amazon-payee YNAB transactions.
+    """
     if since_date is None:
         return _DEFAULT_LOOKBACK_DAYS
     elapsed = (date.today() - since_date).days + date_window_days
@@ -57,6 +65,7 @@ def _build_reasoning(
     order_number: str,
     order: Order | None,
     date_window_days: int,
+    same_day: bool,
 ) -> str:
     """Build a human-readable reasoning string for a match."""
     item_titles = ", ".join(item.title for item in order.items[:3]) if order else ""
@@ -68,7 +77,11 @@ def _build_reasoning(
             f"Amount match against Amazon order #{order_number} within "
             f"{date_window_days} days{suffix}."
         )
-    return f"One leg of a split-shipment Amazon order #{order_number}{suffix}."
+    same_day_desc = "same-day" if same_day else "on a nearby date"
+    return (
+        f"One leg of a split-shipment Amazon order #{order_number}, "
+        f"charged {same_day_desc}{suffix}."
+    )
 
 
 def _serialize_amazon_transaction(transaction: Transaction) -> dict[str, object]:
@@ -192,8 +205,13 @@ def find_amazon_transactions(
                 "order_number": match.order_number,
                 "classification": match.classification,
                 "reasoning": _build_reasoning(
-                    match.classification, match.order_number, order, date_window_days
+                    match.classification,
+                    match.order_number,
+                    order,
+                    date_window_days,
+                    match.same_day,
                 ),
+                "same_day": match.same_day,
                 "split_group": match.split_group,
             }
         )

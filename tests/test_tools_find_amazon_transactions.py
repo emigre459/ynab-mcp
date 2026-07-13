@@ -58,7 +58,7 @@ def test_find_amazon_transactions_returns_exact_match_with_reasoning(
     ]
     amazon_transactions_client = mocker.Mock()
     amazon_transactions_client.get_transactions.return_value = [
-        _amazon_txn("111-1111111", 259.90, date(2026, 6, 1)),
+        _amazon_txn("111-1111111", -259.90, date(2026, 6, 1)),
     ]
     amazon_orders_client = mocker.Mock()
     amazon_orders_client.get_order.return_value = _order(["Widget"])
@@ -76,8 +76,9 @@ def test_find_amazon_transactions_returns_exact_match_with_reasoning(
     }
     assert match["order_number"] == "111-1111111"
     assert match["classification"] == "exact"
+    assert match["same_day"] is True
     assert "Widget" in match["reasoning"]
-    assert match["amazon_transaction"]["grand_total"] == 259.90
+    assert match["amazon_transaction"]["grand_total"] == -259.90
     assert result["ambiguous"] == []
     assert result["unmatched"] == []
     amazon_orders_client.get_order.assert_called_once_with("111-1111111")
@@ -98,7 +99,7 @@ def test_find_amazon_transactions_excludes_refunds_and_whole_foods(
     amazon_transactions_client.get_transactions.return_value = [
         _amazon_txn("111-1111111", 50.00, date(2026, 6, 1), is_refund=True),
         _amazon_txn(
-            "222-2222222", 50.00, date(2026, 6, 1), seller="Whole Foods Market"
+            "222-2222222", -50.00, date(2026, 6, 1), seller="Whole Foods Market"
         ),
     ]
     amazon_orders_client = mocker.Mock()
@@ -149,8 +150,8 @@ def test_find_amazon_transactions_surfaces_ambiguous_candidates(
     ]
     amazon_transactions_client = mocker.Mock()
     amazon_transactions_client.get_transactions.return_value = [
-        _amazon_txn("333-1111111", 30.00, date(2026, 6, 4)),
-        _amazon_txn("333-2222222", 30.00, date(2026, 6, 6)),
+        _amazon_txn("333-1111111", -30.00, date(2026, 6, 4)),
+        _amazon_txn("333-2222222", -30.00, date(2026, 6, 6)),
     ]
     amazon_orders_client = mocker.Mock()
 
