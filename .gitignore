@@ -17,6 +17,9 @@ bun.lockb
 # Env / secrets
 .env
 
+# Machine-specific MCP config (see .mcp.json.example)
+.mcp.json
+
 # OS / editor
 .DS_Store
 

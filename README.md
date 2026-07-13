@@ -11,6 +11,9 @@ Python backend managed with `uv`. Run `make deps` then `make pr_check`.
 2. Optionally set `YNAB_DEFAULT_BUDGET_ID` to skip passing a budget id to
    every tool call (this also hides the `list-budgets` tool, since there's
    only one budget context).
+3. To use this server from Claude Code, copy `.mcp.json.example` to
+   `.mcp.json` and set the `--directory` arg to this repo's absolute path
+   on your machine (`.mcp.json` is gitignored — it's machine-specific).
 
 ## Running
 
