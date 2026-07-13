@@ -405,3 +405,40 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
         """
         resolved_budget_id = resolve_budget_id(budget_id, settings)
         return flag_category_spend(client, resolved_budget_id, month, threshold)
+
+    @mcp.tool(name="analyze-category-trends")
+    def analyze_category_trends_tool(
+        months: int = 6,
+        end_month: str = "current",
+        overspend_threshold: float = 0.10,
+        majority_ratio: float = 0.5,
+        budget_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Detect multi-month overspend/underspend patterns per category.
+
+        Parameters
+        ----------
+        months : int, optional
+            The trailing window size in months, by default ``6``.
+        end_month : str, optional
+            The most recent month in the window: an ISO-formatted month or
+            the literal string ``"current"``, by default ``"current"``.
+        overspend_threshold : float, optional
+            Fraction of budgeted beyond which a single month counts as
+            over/under spent, by default ``0.10``.
+        majority_ratio : float, optional
+            Fraction of the window's months that must show the pattern for
+            it to count as a real trend, by default ``0.5``.
+        budget_id : str | None, optional
+            The YNAB budget id, by default ``None`` (falls back to
+            ``YNAB_DEFAULT_BUDGET_ID``).
+        """
+        resolved_budget_id = resolve_budget_id(budget_id, settings)
+        return analyze_category_trends(
+            client,
+            resolved_budget_id,
+            months=months,
+            end_month=end_month,
+            overspend_threshold=overspend_threshold,
+            majority_ratio=majority_ratio,
+        )
