@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from ynab_mcp.tools.payee_patterns import _match_payees
+from ynab_mcp.tools.payee_patterns import _MatchedPayee, _match_payees, _summarize_group
 
 
 def test_match_payees_exact_match() -> None:
@@ -56,3 +56,110 @@ def test_match_payees_no_match() -> None:
     matches = _match_payees(payees, "walmart", fuzzy_threshold=0.6)  # type: ignore[arg-type]
 
     assert matches == []
+
+
+def _transaction(amount: int, category_name: str | None) -> SimpleNamespace:
+    return SimpleNamespace(amount=amount, category_name=category_name)
+
+
+def test_summarize_group_computes_stats() -> None:
+    """Transaction count, typical amount, amount range, and most common category.
+
+    Computed correctly from a matched payee's transactions.
+    """
+    matched = _MatchedPayee(
+        payee=SimpleNamespace(id="p1", name="Coffee Shop"),  # type: ignore[arg-type]
+        match_type="exact",
+        match_score=None,
+    )
+    transactions = [
+        _transaction(-5000, "Dining Out"),
+        _transaction(-5500, "Dining Out"),
+        _transaction(-4500, "Groceries"),
+    ]
+
+    summary = _summarize_group(matched, transactions)  # type: ignore[arg-type]
+
+    assert summary.payee_id == "p1"
+    assert summary.payee_name == "Coffee Shop"
+    assert summary.match_type == "exact"
+    assert summary.transaction_count == 3
+    assert summary.typical_amount == -5000
+    assert summary.amount_range.min == -5500
+    assert summary.amount_range.max == -4500
+    assert summary.most_common_category == "Dining Out"
+
+
+def test_summarize_group_no_common_category_when_uncategorized() -> None:
+    """most_common_category is None when no transaction has a category."""
+    matched = _MatchedPayee(
+        payee=SimpleNamespace(id="p1", name="Coffee Shop"),  # type: ignore[arg-type]
+        match_type="exact",
+        match_score=None,
+    )
+    transactions = [_transaction(-5000, None), _transaction(-5000, None)]
+
+    summary = _summarize_group(matched, transactions)  # type: ignore[arg-type]
+
+    assert summary.most_common_category is None
+
+
+def test_summarize_group_recurring_guess_fires() -> None:
+    """recurring_guess is set when >=3 transactions have consistent amounts.
+
+    Tests that the heuristic fires.
+    """
+    matched = _MatchedPayee(
+        payee=SimpleNamespace(id="p1", name="Streaming Service"),  # type: ignore[arg-type]
+        match_type="exact",
+        match_score=None,
+    )
+    transactions = [
+        _transaction(-14990, "Entertainment"),
+        _transaction(-14990, "Entertainment"),
+        _transaction(-14990, "Entertainment"),
+    ]
+
+    summary = _summarize_group(matched, transactions)  # type: ignore[arg-type]
+
+    assert summary.recurring_guess is not None
+    assert "14.99" in summary.recurring_guess
+    assert "3" in summary.recurring_guess
+
+
+def test_summarize_group_recurring_guess_does_not_fire_below_count() -> None:
+    """recurring_guess is None with fewer than 3 transactions.
+
+    Even if amounts are consistent.
+    """
+    matched = _MatchedPayee(
+        payee=SimpleNamespace(id="p1", name="Streaming Service"),  # type: ignore[arg-type]
+        match_type="exact",
+        match_score=None,
+    )
+    transactions = [_transaction(-14990, None), _transaction(-14990, None)]
+
+    summary = _summarize_group(matched, transactions)  # type: ignore[arg-type]
+
+    assert summary.recurring_guess is None
+
+
+def test_summarize_group_recurring_guess_does_not_fire_inconsistent_amounts() -> None:
+    """recurring_guess is None when amounts vary too much.
+
+    Even with enough transactions.
+    """
+    matched = _MatchedPayee(
+        payee=SimpleNamespace(id="p1", name="Grocery Store"),  # type: ignore[arg-type]
+        match_type="exact",
+        match_score=None,
+    )
+    transactions = [
+        _transaction(-2000, None),
+        _transaction(-9000, None),
+        _transaction(-15000, None),
+    ]
+
+    summary = _summarize_group(matched, transactions)  # type: ignore[arg-type]
+
+    assert summary.recurring_guess is None
