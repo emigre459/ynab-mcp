@@ -233,6 +233,42 @@ def test_find_payee_transactions_excludes_payee_with_no_transactions(
     assert result == []
 
 
+def test_find_payee_transactions_groups_are_not_pooled_across_payees(
+    mocker: MockerFixture,
+) -> None:
+    """Two matching payees produce two separate summaries, not one pooled group.
+
+    "Amazon.com" and "AMZN Mktp US Amazon" both match a query of "amazon",
+    but they're distinct payees with distinct transaction histories -- the
+    spec's central requirement is that they stay split, not merged into a
+    single combined summary.
+    """
+    client = mocker.Mock()
+    list_payees_mock = mocker.patch("ynab_mcp.tools.payee_patterns.list_payees")
+    list_payees_mock.return_value = [
+        SimpleNamespace(id="p1", name="Amazon.com"),
+        SimpleNamespace(id="p2", name="AMZN Mktp US Amazon"),
+    ]
+    transactions_by_payee = {
+        "p1": [_transaction(-5000, "Shopping")],
+        "p2": [_transaction(-3000, "Shopping"), _transaction(-3200, "Shopping")],
+    }
+    list_transactions_mock = mocker.patch(
+        "ynab_mcp.tools.payee_patterns.list_transactions"
+    )
+    list_transactions_mock.side_effect = (
+        lambda client, budget_id, payee_id: transactions_by_payee[payee_id]
+    )
+
+    result = find_payee_transactions(client, "budget-1", "amazon")
+
+    assert len(result) == 2
+    assert result[0].payee_id == "p1"
+    assert result[0].transaction_count == 1
+    assert result[1].payee_id == "p2"
+    assert result[1].transaction_count == 2
+
+
 def test_find_payee_transactions_rejects_empty_query(
     mocker: MockerFixture,
 ) -> None:
