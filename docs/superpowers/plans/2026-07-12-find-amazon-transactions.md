@@ -1089,7 +1089,7 @@ def test_find_amazon_transactions_returns_exact_match_with_reasoning(
         "ynab_mcp.tools.find_amazon_transactions.list_transactions"
     )
     list_transactions.return_value = [
-        _ynab_txn(mocker, "y1", -25990, date(2026, 6, 1), "Amazon.com"),
+        _ynab_txn(mocker, "y1", -259900, date(2026, 6, 1), "Amazon.com"),
     ]
     amazon_transactions_client = mocker.Mock()
     amazon_transactions_client.get_transactions.return_value = [
@@ -1106,7 +1106,7 @@ def test_find_amazon_transactions_returns_exact_match_with_reasoning(
     match = result["matches"][0]
     assert match["ynab_transaction"] == {
         "id": "y1",
-        "amount": -25990,
+        "amount": -259900,
         "payee_name": "Amazon.com",
     }
     assert match["order_number"] == "111-1111111"
@@ -1180,7 +1180,7 @@ def test_find_amazon_transactions_surfaces_ambiguous_candidates(
         "ynab_mcp.tools.find_amazon_transactions.list_transactions"
     )
     list_transactions.return_value = [
-        _ynab_txn(mocker, "y1", -3000, date(2026, 6, 5), "Amazon.com"),
+        _ynab_txn(mocker, "y1", -30000, date(2026, 6, 5), "Amazon.com"),
     ]
     amazon_transactions_client = mocker.Mock()
     amazon_transactions_client.get_transactions.return_value = [
