@@ -1,4 +1,4 @@
-"""flag-category-spend and analyze-category-trends tools: budget vs. actual spend analysis."""
+"""Budget vs. actual spend analysis: flag-category-spend, analyze-category-trends."""
 
 from datetime import date
 

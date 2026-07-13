@@ -21,7 +21,7 @@ def test_to_dollars_converts_milliunits() -> None:
 def test_spent_milli_negates_activity() -> None:
     """Spend is the negation of YNAB's activity field."""
     category = SimpleNamespace(activity=-420000)
-    assert _spent_milli(category) == 420000
+    assert _spent_milli(category) == 420000  # type: ignore[arg-type]
 
 
 def test_percent_diff_computes_ratio() -> None:
