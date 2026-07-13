@@ -3,8 +3,14 @@
 from datetime import date
 from types import SimpleNamespace
 
+import ynab
+from fastmcp.exceptions import ToolError
+from pytest import raises
+from pytest_mock import MockerFixture
+
 from ynab_mcp.tools.spend_analysis import (
     _direction,
+    _fetch_month_categories,
     _percent_diff,
     _spent_milli,
     _to_dollars,
@@ -74,3 +80,57 @@ def test_trailing_months_crosses_year_boundary() -> None:
 def test_trailing_months_single_month() -> None:
     """A window of 1 month is just the end month itself."""
     assert _trailing_months(date(2024, 6, 1), 1) == [date(2024, 6, 1)]
+
+
+def test_fetch_month_categories_calls_get_plan_month(mocker: MockerFixture) -> None:
+    """The fetch calls MonthsApi.get_plan_month with the given month."""
+    client = mocker.Mock()
+    months_api = mocker.patch("ynab_mcp.tools.spend_analysis.ynab.MonthsApi")
+    visible = SimpleNamespace(id="cat-1", hidden=False, deleted=False)
+    months_api.return_value.get_plan_month.return_value = SimpleNamespace(
+        data=SimpleNamespace(month=SimpleNamespace(categories=[visible]))
+    )
+
+    result = _fetch_month_categories(client, "budget-1", date(2024, 3, 1))
+
+    assert result == [visible]
+    months_api.return_value.get_plan_month.assert_called_once_with(
+        plan_id="budget-1", month=date(2024, 3, 1)
+    )
+
+
+def test_fetch_month_categories_excludes_hidden_and_deleted(
+    mocker: MockerFixture,
+) -> None:
+    """Hidden and deleted categories are filtered out."""
+    client = mocker.Mock()
+    months_api = mocker.patch("ynab_mcp.tools.spend_analysis.ynab.MonthsApi")
+    visible = SimpleNamespace(id="cat-1", hidden=False, deleted=False)
+    hidden = SimpleNamespace(id="cat-2", hidden=True, deleted=False)
+    deleted = SimpleNamespace(id="cat-3", hidden=False, deleted=True)
+    months_api.return_value.get_plan_month.return_value = SimpleNamespace(
+        data=SimpleNamespace(
+            month=SimpleNamespace(categories=[visible, hidden, deleted])
+        )
+    )
+
+    result = _fetch_month_categories(client, "budget-1", date(2024, 3, 1))
+
+    assert result == [visible]
+
+
+def test_fetch_month_categories_raises_tool_error_on_api_exception(
+    mocker: MockerFixture,
+) -> None:
+    """An ApiException from the SDK surfaces as a ToolError."""
+    client = mocker.Mock()
+    months_api = mocker.patch("ynab_mcp.tools.spend_analysis.ynab.MonthsApi")
+    months_api.return_value.get_plan_month.side_effect = ynab.ApiException(
+        status=404,
+        reason="Not Found",
+        body='{"error": {"id": "404", "name": "not_found", '
+        '"detail": "Budget not found"}}',
+    )
+
+    with raises(ToolError, match="Budget not found"):
+        _fetch_month_categories(client, "missing-budget", date(2024, 3, 1))

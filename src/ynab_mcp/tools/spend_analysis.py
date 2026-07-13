@@ -4,6 +4,8 @@ from datetime import date
 
 import ynab
 
+from ynab_mcp.errors import translate_api_exception
+
 
 def _to_dollars(milliunits: int) -> float:
     """Convert a YNAB milliunit amount to dollars, rounded to 2 decimals.
@@ -116,3 +118,39 @@ def _trailing_months(end_month: date, months: int) -> list[date]:
             month = 12
             year -= 1
     return list(reversed(result))
+
+
+def _fetch_month_categories(
+    client: ynab.ApiClient, budget_id: str, month: date
+) -> list[ynab.Category]:
+    """Fetch a month's categories, excluding hidden and deleted ones.
+
+    Parameters
+    ----------
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    budget_id : str
+        The YNAB budget id (translated to the SDK's ``plan_id``).
+    month : datetime.date
+        The first-of-month date to fetch.
+
+    Returns
+    -------
+    list[ynab.Category]
+        Every non-hidden, non-deleted category for the month.
+
+    Raises
+    ------
+    fastmcp.exceptions.ToolError
+        If the YNAB API request fails.
+    """
+    api = ynab.MonthsApi(client)
+    try:
+        response = api.get_plan_month(plan_id=budget_id, month=month)
+    except ynab.ApiException as exc:
+        raise translate_api_exception(exc) from exc
+    return [
+        category
+        for category in response.data.month.categories
+        if not category.hidden and not category.deleted
+    ]
