@@ -109,8 +109,10 @@ If step 1 or step 2 fails, no mutation has happened yet (step 1 is read-only, st
 
 **Parameters:** `operation: Literal["create", "update", "delete"]`, `budget_id: str | None`, plus:
 - `create`: `account_id`, `date`, `amount`, `frequency`, plus optional `payee_id`, `payee_name`, `category_id`, `memo`, `flag_color`.
-- `update`: `scheduled_transaction_id`, plus any subset of the create fields to change.
+- `update`: `scheduled_transaction_id`, `account_id`, `date`, `amount`, `frequency`, plus optional `payee_id`, `payee_name`, `category_id`, `memo`, `flag_color`.
 - `delete`: `scheduled_transaction_id`.
+
+**Implementation note:** unlike `bulk-manage-transactions`' update (which is a YNAB PATCH — partial fields only), YNAB's scheduled-transaction update endpoint is a PUT: the SDK's `SaveScheduledTransaction` model requires `account_id` and `date` regardless of create vs. update, so `update` requires the same full field set as `create` (not "any subset" as originally drafted) — a caller must resupply the complete desired state, or fields omitted would be cleared server-side.
 
 Each is a single, direct wrap of the corresponding `ScheduledTransactionsApi` method (`create_scheduled_transaction`, `update_scheduled_transaction`, `delete_scheduled_transaction`) — no batching, matching the issue's "a recurring transaction" (singular).
 
