@@ -7,6 +7,10 @@ from difflib import SequenceMatcher
 from typing import Literal
 
 import ynab
+from fastmcp.exceptions import ToolError
+
+from ynab_mcp.tools.payees import list_payees
+from ynab_mcp.tools.transactions import list_transactions
 
 MatchType = Literal["exact", "substring", "fuzzy"]
 
@@ -216,3 +220,52 @@ def _summarize_group(
         most_common_category=_most_common_category(transactions),
         recurring_guess=_recurring_guess(amounts, typical_amount),
     )
+
+
+def find_payee_transactions(
+    client: ynab.ApiClient,
+    budget_id: str,
+    payee_query: str,
+    fuzzy_threshold: float = 0.6,
+) -> list[PayeeGroupSummary]:
+    """Find transaction patterns for payees matching a query.
+
+    Parameters
+    ----------
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    budget_id : str
+        The YNAB budget id (translated to the SDK's ``plan_id``).
+    payee_query : str
+        A payee name or substring to search for.
+    fuzzy_threshold : float, optional
+        The minimum ``difflib`` similarity ratio for a non-substring
+        match, by default ``0.6``.
+
+    Returns
+    -------
+    list[PayeeGroupSummary]
+        One summary per matched payee with at least one transaction.
+        Empty if no payee matches ``payee_query``.
+
+    Raises
+    ------
+    fastmcp.exceptions.ToolError
+        If ``payee_query`` is empty or whitespace-only, or if an
+        underlying YNAB API request fails.
+    """
+    if not payee_query.strip():
+        raise ToolError("payee_query must not be empty.")
+
+    payees = list_payees(client, budget_id)
+    matches = _match_payees(payees, payee_query, fuzzy_threshold)
+
+    summaries: list[PayeeGroupSummary] = []
+    for matched in matches:
+        transactions = list_transactions(
+            client, budget_id, payee_id=str(matched.payee.id)
+        )
+        if not transactions:
+            continue
+        summaries.append(_summarize_group(matched, transactions))
+    return summaries

@@ -2,7 +2,16 @@
 
 from types import SimpleNamespace
 
-from ynab_mcp.tools.payee_patterns import _MatchedPayee, _match_payees, _summarize_group
+from fastmcp.exceptions import ToolError
+from pytest import raises
+from pytest_mock import MockerFixture
+
+from ynab_mcp.tools.payee_patterns import (
+    _MatchedPayee,
+    _match_payees,
+    _summarize_group,
+    find_payee_transactions,
+)
 
 
 def test_match_payees_exact_match() -> None:
@@ -163,3 +172,72 @@ def test_summarize_group_recurring_guess_does_not_fire_inconsistent_amounts() ->
     summary = _summarize_group(matched, transactions)  # type: ignore[arg-type]
 
     assert summary.recurring_guess is None
+
+
+def test_find_payee_transactions_returns_summary_for_matched_payee(
+    mocker: MockerFixture,
+) -> None:
+    """A matching payee with transactions produces one summary."""
+    client = mocker.Mock()
+    list_payees_mock = mocker.patch("ynab_mcp.tools.payee_patterns.list_payees")
+    list_payees_mock.return_value = [SimpleNamespace(id="p1", name="Amazon.com")]
+    list_transactions_mock = mocker.patch(
+        "ynab_mcp.tools.payee_patterns.list_transactions"
+    )
+    list_transactions_mock.return_value = [
+        _transaction(-5000, "Shopping"),
+        _transaction(-5000, "Shopping"),
+        _transaction(-5000, "Shopping"),
+    ]
+
+    result = find_payee_transactions(client, "budget-1", "amazon")
+
+    assert len(result) == 1
+    assert result[0].payee_id == "p1"
+    assert result[0].transaction_count == 3
+    list_payees_mock.assert_called_once_with(client, "budget-1")
+    list_transactions_mock.assert_called_once_with(client, "budget-1", payee_id="p1")
+
+
+def test_find_payee_transactions_no_match_returns_empty_list(
+    mocker: MockerFixture,
+) -> None:
+    """No matching payee produces an empty result, not an error."""
+    client = mocker.Mock()
+    list_payees_mock = mocker.patch("ynab_mcp.tools.payee_patterns.list_payees")
+    list_payees_mock.return_value = [SimpleNamespace(id="p1", name="Netflix")]
+    list_transactions_mock = mocker.patch(
+        "ynab_mcp.tools.payee_patterns.list_transactions"
+    )
+
+    result = find_payee_transactions(client, "budget-1", "walmart")
+
+    assert result == []
+    list_transactions_mock.assert_not_called()
+
+
+def test_find_payee_transactions_excludes_payee_with_no_transactions(
+    mocker: MockerFixture,
+) -> None:
+    """A matched payee with zero transactions is excluded from the result."""
+    client = mocker.Mock()
+    list_payees_mock = mocker.patch("ynab_mcp.tools.payee_patterns.list_payees")
+    list_payees_mock.return_value = [SimpleNamespace(id="p1", name="Amazon.com")]
+    list_transactions_mock = mocker.patch(
+        "ynab_mcp.tools.payee_patterns.list_transactions"
+    )
+    list_transactions_mock.return_value = []
+
+    result = find_payee_transactions(client, "budget-1", "amazon")
+
+    assert result == []
+
+
+def test_find_payee_transactions_rejects_empty_query(
+    mocker: MockerFixture,
+) -> None:
+    """An empty or whitespace-only payee_query raises ToolError."""
+    client = mocker.Mock()
+
+    with raises(ToolError, match="payee_query"):
+        find_payee_transactions(client, "budget-1", "   ")
