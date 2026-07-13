@@ -33,6 +33,33 @@ MCP server for YNAB
 This is a **Python backend** project managed with `uv`. Source lives in `src/`,
 tests in `tests/`. All quality gates run through the `Makefile`.
 
+### Architecture: `src/ynab_mcp/`
+
+A FastMCP v3 stdio server wrapping the official `ynab` PyPI client. Layout,
+established in issue #11 and extended by every later epic-#10 child that adds
+tools:
+
+- `config.py` — `Settings.from_env()` reads `YNAB_PAT` (required, fail-hard),
+  `YNAB_DEFAULT_BUDGET_ID` (optional), `YNAB_READ_ONLY` (parsed, unenforced
+  until write tools exist).
+- `client.py` — builds the single shared `ynab.ApiClient`; `resolve_budget_id`
+  is the only place the public `budget_id` terminology (matches YNAB's
+  product UI) translates to the SDK's internal `plan_id` (the `ynab` client
+  renamed `Budget`→`Plan` in v4). Never let `plan_id` leak into a public tool
+  name/param.
+- `errors.py` — `translate_api_exception` maps `ynab.ApiException` →
+  `fastmcp.exceptions.ToolError`, carrying YNAB's real error detail, never
+  masked.
+- `tools/` — one module per tool group, each with a plain testable function
+  plus a thin `@mcp.tool`-registering `register(mcp, client, settings)`
+  function (budgets.py's `register` omits `settings` — no default-budget
+  concept applies to listing all budgets).
+- `server.py` — `build_server()` wires it all together; `list-budgets` is
+  registered only when no default budget is configured. `main()` is the
+  `uv run ynab-mcp` entry point (`[project.scripts]` in `pyproject.toml`).
+
+Design rationale: `docs/superpowers/specs/2026-07-12-core-ynab-mcp-server-design.md`.
+
 ## Quality Gates
 
 Every change must pass `make pr_check` (lint + tests) before a PR is opened.
@@ -43,6 +70,8 @@ Every change must pass `make pr_check` (lint + tests) before a PR is opened.
 | `make format` | Auto-format the source tree |
 | `make lint` | Format-check + lint + type-check |
 | `make tests` | Unit tests |
+| `make e2e` | E2E tests (spawns the real `uv run ynab-mcp` stdio subprocess) |
+| `make run` | Run the YNAB MCP stdio server (needs a real `YNAB_PAT` in `.env`) |
 | `make coverage` | Tests with an 80% coverage gate |
 | `make security` | Dependency / SAST scan |
 | `make pr_check` | `lint` + `tests` |
