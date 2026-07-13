@@ -15,6 +15,7 @@ from ynab_mcp.tools.spend_analysis import (
     _spent_milli,
     _to_dollars,
     _trailing_months,
+    analyze_category_trends,
     flag_category_spend,
 )
 
@@ -274,3 +275,147 @@ def test_flag_category_spend_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Budget not found"):
         flag_category_spend(client, "missing-budget", "2024-03-01")
+
+
+def _mock_month_sequence(mocker: MockerFixture, monthly_categories: list[list]) -> None:
+    """Mock get_plan_month to return one category list per call, in order."""
+    months_api = mocker.patch("ynab_mcp.tools.spend_analysis.ynab.MonthsApi")
+    months_api.return_value.get_plan_month.side_effect = [
+        SimpleNamespace(data=SimpleNamespace(month=SimpleNamespace(categories=cats)))
+        for cats in monthly_categories
+    ]
+
+
+def test_analyze_category_trends_detects_rising_overspend(
+    mocker: MockerFixture,
+) -> None:
+    """A category with a rising budget, overspent in most months, is flagged."""
+    client = mocker.Mock()
+    # 6 months, budgeted rises 200k -> 350k, overspent in 4 of 6 months.
+    budgets = [200000, 220000, 240000, 260000, 300000, 350000]
+    activities = [-250000, -200000, -300000, -210000, -400000, -420000]
+    monthly = [[_category(budgeted=b, activity=a)] for b, a in zip(budgets, activities)]
+    _mock_month_sequence(mocker, monthly)
+
+    result = analyze_category_trends(
+        client, "budget-1", months=6, end_month="2024-06-01"
+    )
+
+    assert len(result) == 1
+    flag = result[0]
+    assert flag["trend"] == "rising_overspend"
+    assert flag["category_id"] == "cat-1"
+    assert flag["budgeted"] == 350.00
+    assert flag["months_over_threshold"] >= 3  # type: ignore[operator]
+    assert flag["months_in_window"] == 6
+    assert "rising_overspend" not in flag["reason"]  # type: ignore[operator]
+    assert "overspent" in flag["reason"]  # type: ignore[operator]
+
+
+def test_analyze_category_trends_detects_persistent_underspend(
+    mocker: MockerFixture,
+) -> None:
+    """A category consistently underspent is flagged, regardless of budget trend."""
+    client = mocker.Mock()
+    monthly = [[_category(budgeted=300000, activity=-50000)] for _ in range(6)]
+    _mock_month_sequence(mocker, monthly)
+
+    result = analyze_category_trends(
+        client, "budget-1", months=6, end_month="2024-06-01"
+    )
+
+    assert len(result) == 1
+    flag = result[0]
+    assert flag["trend"] == "persistent_underspend"
+    assert flag["months_under_threshold"] == 6
+    assert flag["months_in_window"] == 6
+
+
+def test_analyze_category_trends_ignores_single_anomalous_month(
+    mocker: MockerFixture,
+) -> None:
+    """One anomalous overspend month among six does not trigger a flag."""
+    client = mocker.Mock()
+    # Only 1 of 6 months is over threshold; well within threshold otherwise.
+    activities = [-305000, -305000, -305000, -305000, -305000, -600000]
+    monthly = [[_category(budgeted=300000, activity=a)] for a in activities]
+    _mock_month_sequence(mocker, monthly)
+
+    result = analyze_category_trends(
+        client, "budget-1", months=6, end_month="2024-06-01"
+    )
+
+    assert result == []
+
+
+def test_analyze_category_trends_flags_insufficient_history(
+    mocker: MockerFixture,
+) -> None:
+    """A category present in only the 2 most recent of 6 months is skipped."""
+    client = mocker.Mock()
+    empty: list = []
+    present = [_category(budgeted=300000, activity=-300000)]
+    monthly = [empty, empty, empty, empty, present, present]
+    _mock_month_sequence(mocker, monthly)
+
+    result = analyze_category_trends(
+        client, "budget-1", months=6, end_month="2024-06-01"
+    )
+
+    assert len(result) == 1
+    flag = result[0]
+    assert flag["trend"] == "insufficient_history"
+    assert flag["category_id"] == "cat-1"
+    assert "2/6" in flag["reason"]  # type: ignore[operator]
+
+
+def test_analyze_category_trends_excludes_hidden(mocker: MockerFixture) -> None:
+    """A category hidden in every month never appears in trend output."""
+    client = mocker.Mock()
+    monthly = [
+        [_category(budgeted=300000, activity=-50000, hidden=True)] for _ in range(6)
+    ]
+    _mock_month_sequence(mocker, monthly)
+
+    result = analyze_category_trends(
+        client, "budget-1", months=6, end_month="2024-06-01"
+    )
+
+    assert result == []
+
+
+def test_analyze_category_trends_rejects_invalid_months(mocker: MockerFixture) -> None:
+    """Months < 1 raises a ToolError."""
+    client = mocker.Mock()
+
+    with raises(ToolError, match="months"):
+        analyze_category_trends(client, "budget-1", months=0)
+
+
+def test_analyze_category_trends_rejects_invalid_majority_ratio(
+    mocker: MockerFixture,
+) -> None:
+    """majority_ratio outside (0, 1] raises a ToolError."""
+    client = mocker.Mock()
+
+    with raises(ToolError, match="majority_ratio"):
+        analyze_category_trends(client, "budget-1", majority_ratio=1.5)
+
+
+def test_analyze_category_trends_raises_tool_error_on_api_exception(
+    mocker: MockerFixture,
+) -> None:
+    """An ApiException on any fetched month surfaces as a ToolError."""
+    client = mocker.Mock()
+    months_api = mocker.patch("ynab_mcp.tools.spend_analysis.ynab.MonthsApi")
+    months_api.return_value.get_plan_month.side_effect = ynab.ApiException(
+        status=404,
+        reason="Not Found",
+        body='{"error": {"id": "404", "name": "not_found", '
+        '"detail": "Budget not found"}}',
+    )
+
+    with raises(ToolError, match="Budget not found"):
+        analyze_category_trends(
+            client, "missing-budget", months=6, end_month="2024-06-01"
+        )

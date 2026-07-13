@@ -232,6 +232,145 @@ def flag_category_spend(
     return flags
 
 
+def analyze_category_trends(
+    client: ynab.ApiClient,
+    budget_id: str,
+    months: int = 6,
+    end_month: str = "current",
+    overspend_threshold: float = 0.10,
+    majority_ratio: float = 0.5,
+) -> list[dict[str, object]]:
+    """Detect multi-month overspend/underspend patterns per category.
+
+    Parameters
+    ----------
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    budget_id : str
+        The YNAB budget id (translated to the SDK's ``plan_id``).
+    months : int, optional
+        The trailing window size in months, by default ``6``.
+    end_month : str, optional
+        The most recent month in the window: an ISO-formatted month or the
+        literal string ``"current"``, by default ``"current"``.
+    overspend_threshold : float, optional
+        Fraction of budgeted beyond which a single month counts as
+        over/under spent, by default ``0.10``.
+    majority_ratio : float, optional
+        Fraction of the window's months that must show the pattern for it
+        to count as a real trend, by default ``0.5``.
+
+    Returns
+    -------
+    list[dict[str, object]]
+        One entry per flagged or insufficient-history category. Flagged
+        entries have ``category_id``, ``category_name``, ``budgeted``
+        (dollars, most recent month), ``trend``
+        (``"rising_overspend"``/``"persistent_underspend"``), a
+        ``months_over_threshold`` or ``months_under_threshold`` count,
+        ``months_in_window``, and a plain-language ``reason``.
+        Insufficient-history entries have ``category_id``,
+        ``category_name``, ``trend="insufficient_history"``, and
+        ``reason``.
+
+    Raises
+    ------
+    fastmcp.exceptions.ToolError
+        If ``months < 1``, ``overspend_threshold < 0``, ``majority_ratio``
+        is outside ``(0, 1]``, ``end_month`` is invalid, or the YNAB API
+        request fails for any month in the window.
+    """
+    if months < 1:
+        raise ToolError("months must be >= 1.")
+    if overspend_threshold < 0:
+        raise ToolError("overspend_threshold must be >= 0.")
+    if not (0 < majority_ratio <= 1):
+        raise ToolError("majority_ratio must be > 0 and <= 1.")
+
+    resolved_end_month = parse_month(end_month)
+    window_months = _trailing_months(resolved_end_month, months)
+    monthly_categories = [
+        _fetch_month_categories(client, budget_id, m) for m in window_months
+    ]
+    month_maps = [{c.id: c for c in cats} for cats in monthly_categories]
+    all_category_ids = {c.id: c.name for cats in monthly_categories for c in cats}
+
+    results: list[dict[str, object]] = []
+    for category_id in all_category_ids:
+        trailing_count = 0
+        for month_map in reversed(month_maps):
+            if category_id in month_map:
+                trailing_count += 1
+            else:
+                break
+
+        if trailing_count < months:
+            name = next(
+                m[category_id].name for m in reversed(month_maps) if category_id in m
+            )
+            results.append(
+                {
+                    "category_id": category_id,
+                    "category_name": name,
+                    "trend": "insufficient_history",
+                    "reason": (
+                        f"Insufficient history ({trailing_count}/{months} months)."
+                    ),
+                }
+            )
+            continue
+
+        latest = month_maps[-1][category_id]
+        earliest = month_maps[0][category_id]
+
+        months_over = 0
+        months_under = 0
+        for month_map in month_maps:
+            category = month_map[category_id]
+            direction = _direction(
+                category.budgeted, _spent_milli(category), overspend_threshold
+            )
+            if direction == "over":
+                months_over += 1
+            elif direction == "under":
+                months_under += 1
+
+        rising = latest.budgeted > earliest.budgeted
+        if rising and months_over / months >= majority_ratio:
+            results.append(
+                {
+                    "category_id": category_id,
+                    "category_name": latest.name,
+                    "budgeted": _to_dollars(latest.budgeted),
+                    "trend": "rising_overspend",
+                    "months_over_threshold": months_over,
+                    "months_in_window": months,
+                    "reason": (
+                        f"Budget raised from ${_to_dollars(earliest.budgeted):.2f} "
+                        f"to ${_to_dollars(latest.budgeted):.2f} over {months} "
+                        f"months but overspent in {months_over}/{months} months."
+                    ),
+                }
+            )
+        elif months_under / months >= majority_ratio:
+            results.append(
+                {
+                    "category_id": category_id,
+                    "category_name": latest.name,
+                    "budgeted": _to_dollars(latest.budgeted),
+                    "trend": "persistent_underspend",
+                    "months_under_threshold": months_under,
+                    "months_in_window": months,
+                    "reason": (
+                        f"Underspent in {months_under}/{months} months "
+                        f"(budget ${_to_dollars(latest.budgeted):.2f})."
+                    ),
+                }
+            )
+
+    return results
+
+
 def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
     """Register the spend-analysis tools on ``mcp``.
 
