@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 from fastmcp import Client, FastMCP
+from pytest_mock import MockerFixture
 
 from ynab_mcp.server import build_server
 
@@ -86,3 +87,39 @@ def test_build_server_registers_all_other_tools(
         "list-payees",
         "lookup-entity-by-id",
     }
+
+
+def test_build_server_registers_find_amazon_transactions_when_configured(
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    """The Amazon tool is registered when Amazon credentials are set."""
+    monkeypatch.setattr("ynab_mcp.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("YNAB_PAT", "test-token")
+    monkeypatch.setenv("YNAB_DEFAULT_BUDGET_ID", "budget-123")
+    monkeypatch.setenv("AMAZON_USERNAME", "user@example.com")
+    monkeypatch.setenv("AMAZON_PASSWORD", "hunter2")
+    monkeypatch.delenv("AMAZON_OTP_SECRET_KEY", raising=False)
+    mocker.patch("ynab_mcp.server.build_amazon_session")
+    mocker.patch("ynab_mcp.server.build_amazon_orders")
+    mocker.patch("ynab_mcp.server.build_amazon_transactions")
+
+    mcp = build_server()
+
+    tool_names = _list_tool_names(mcp)
+    assert "find-amazon-transactions" in tool_names
+
+
+def test_build_server_omits_find_amazon_transactions_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Amazon tool is absent when Amazon credentials are unset."""
+    monkeypatch.setattr("ynab_mcp.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("YNAB_PAT", "test-token")
+    monkeypatch.setenv("YNAB_DEFAULT_BUDGET_ID", "budget-123")
+    monkeypatch.delenv("AMAZON_USERNAME", raising=False)
+    monkeypatch.delenv("AMAZON_PASSWORD", raising=False)
+
+    mcp = build_server()
+
+    tool_names = _list_tool_names(mcp)
+    assert "find-amazon-transactions" not in tool_names
