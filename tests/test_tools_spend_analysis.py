@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import ynab
 from fastmcp.exceptions import ToolError
-from pytest import raises
+from pytest import approx, raises
 from pytest_mock import MockerFixture
 
 from ynab_mcp.tools.spend_analysis import (
@@ -15,6 +15,7 @@ from ynab_mcp.tools.spend_analysis import (
     _spent_milli,
     _to_dollars,
     _trailing_months,
+    flag_category_spend,
 )
 
 
@@ -134,3 +135,142 @@ def test_fetch_month_categories_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Budget not found"):
         _fetch_month_categories(client, "missing-budget", date(2024, 3, 1))
+
+
+def _category(
+    category_id: str = "cat-1",
+    name: str = "Groceries",
+    budgeted: int = 300000,
+    activity: int = -420000,
+    hidden: bool = False,
+    deleted: bool = False,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=category_id,
+        name=name,
+        budgeted=budgeted,
+        activity=activity,
+        hidden=hidden,
+        deleted=deleted,
+    )
+
+
+def _mock_month_categories(mocker: MockerFixture, categories: list) -> None:
+    months_api = mocker.patch("ynab_mcp.tools.spend_analysis.ynab.MonthsApi")
+    months_api.return_value.get_plan_month.return_value = SimpleNamespace(
+        data=SimpleNamespace(month=SimpleNamespace(categories=categories))
+    )
+
+
+def test_flag_category_spend_flags_over_threshold(mocker: MockerFixture) -> None:
+    """A category spent well beyond budget is flagged 'over'."""
+    client = mocker.Mock()
+    _mock_month_categories(mocker, [_category(budgeted=300000, activity=-420000)])
+
+    result = flag_category_spend(client, "budget-1", "2024-03-01", threshold=0.10)
+
+    assert len(result) == 1
+    flag = result[0]
+    assert flag["category_id"] == "cat-1"
+    assert flag["category_name"] == "Groceries"
+    assert flag["budgeted"] == 300.00
+    assert flag["activity"] == 420.00
+    assert flag["direction"] == "over"
+    assert flag["percent_diff"] == approx(0.40)
+    assert "420.00" in flag["reason"]  # type: ignore[operator]
+    assert "300.00" in flag["reason"]  # type: ignore[operator]
+    assert "40%" in flag["reason"]  # type: ignore[operator]
+    assert "over" in flag["reason"]  # type: ignore[operator]
+
+
+def test_flag_category_spend_flags_under_threshold(mocker: MockerFixture) -> None:
+    """A category spent well below budget is flagged 'under'."""
+    client = mocker.Mock()
+    _mock_month_categories(mocker, [_category(budgeted=300000, activity=-50000)])
+
+    result = flag_category_spend(client, "budget-1", "2024-03-01", threshold=0.10)
+
+    assert len(result) == 1
+    assert result[0]["direction"] == "under"
+
+
+def test_flag_category_spend_omits_within_threshold(mocker: MockerFixture) -> None:
+    """A category within threshold is not included in the output."""
+    client = mocker.Mock()
+    _mock_month_categories(mocker, [_category(budgeted=300000, activity=-310000)])
+
+    result = flag_category_spend(client, "budget-1", "2024-03-01", threshold=0.10)
+
+    assert result == []
+
+
+def test_flag_category_spend_zero_budget_with_activity_always_flagged(
+    mocker: MockerFixture,
+) -> None:
+    """A $0-budgeted category with any spend is always flagged 'over'."""
+    client = mocker.Mock()
+    _mock_month_categories(mocker, [_category(budgeted=0, activity=-1000)])
+
+    result = flag_category_spend(client, "budget-1", "2024-03-01", threshold=0.10)
+
+    assert len(result) == 1
+    assert result[0]["direction"] == "over"
+    assert result[0]["percent_diff"] is None
+    assert "no budget allocated" in result[0]["reason"]  # type: ignore[operator]
+
+
+def test_flag_category_spend_zero_budget_zero_activity_not_flagged(
+    mocker: MockerFixture,
+) -> None:
+    """A $0-budgeted, unused category is not flagged."""
+    client = mocker.Mock()
+    _mock_month_categories(mocker, [_category(budgeted=0, activity=0)])
+
+    result = flag_category_spend(client, "budget-1", "2024-03-01", threshold=0.10)
+
+    assert result == []
+
+
+def test_flag_category_spend_excludes_hidden(mocker: MockerFixture) -> None:
+    """A hidden category is excluded even if over threshold."""
+    client = mocker.Mock()
+    _mock_month_categories(
+        mocker, [_category(budgeted=300000, activity=-420000, hidden=True)]
+    )
+
+    result = flag_category_spend(client, "budget-1", "2024-03-01", threshold=0.10)
+
+    assert result == []
+
+
+def test_flag_category_spend_rejects_invalid_month(mocker: MockerFixture) -> None:
+    """An unparseable month raises a ToolError."""
+    client = mocker.Mock()
+
+    with raises(ToolError, match="Invalid month"):
+        flag_category_spend(client, "budget-1", "not-a-date")
+
+
+def test_flag_category_spend_rejects_negative_threshold(mocker: MockerFixture) -> None:
+    """A negative threshold raises a ToolError."""
+    client = mocker.Mock()
+
+    with raises(ToolError, match="threshold"):
+        flag_category_spend(client, "budget-1", "2024-03-01", threshold=-0.1)
+
+
+def test_flag_category_spend_raises_tool_error_on_api_exception(
+    mocker: MockerFixture,
+) -> None:
+    """An ApiException from the SDK surfaces as a ToolError."""
+    client = mocker.Mock()
+    months_api = mocker.patch("ynab_mcp.tools.spend_analysis.ynab.MonthsApi")
+    months_api.return_value.get_plan_month.side_effect = ynab.ApiException(
+        status=404,
+        reason="Not Found",
+        body='{"error": {"id": "404", "name": "not_found", '
+        '"detail": "Budget not found"}}',
+    )
+
+    with raises(ToolError, match="Budget not found"):
+        flag_category_spend(client, "missing-budget", "2024-03-01")

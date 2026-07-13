@@ -3,8 +3,10 @@
 from datetime import date
 
 import ynab
+from fastmcp.exceptions import ToolError
 
 from ynab_mcp.errors import translate_api_exception
+from ynab_mcp.tools.months import parse_month
 
 
 def _to_dollars(milliunits: int) -> float:
@@ -154,3 +156,74 @@ def _fetch_month_categories(
         for category in response.data.month.categories
         if not category.hidden and not category.deleted
     ]
+
+
+def flag_category_spend(
+    client: ynab.ApiClient, budget_id: str, month: str, threshold: float = 0.10
+) -> list[dict[str, object]]:
+    """Flag categories whose spend is beyond threshold of budgeted for a month.
+
+    Parameters
+    ----------
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    budget_id : str
+        The YNAB budget id (translated to the SDK's ``plan_id``).
+    month : str
+        An ISO-formatted month (e.g. ``"2024-01-01"``) or the literal
+        string ``"current"``.
+    threshold : float, optional
+        Fraction of the budgeted amount beyond which spend is flagged, by
+        default ``0.10``.
+
+    Returns
+    -------
+    list[dict[str, object]]
+        One entry per flagged category (categories within threshold are
+        omitted), each with ``category_id``, ``category_name``,
+        ``budgeted``, ``activity`` (dollars), ``direction``
+        (``"over"``/``"under"``), ``percent_diff``, and a plain-language
+        ``reason``.
+
+    Raises
+    ------
+    fastmcp.exceptions.ToolError
+        If ``threshold`` is negative, ``month`` is invalid, or the YNAB
+        API request fails.
+    """
+    if threshold < 0:
+        raise ToolError("threshold must be >= 0.")
+    resolved_month = parse_month(month)
+    categories = _fetch_month_categories(client, budget_id, resolved_month)
+
+    flags: list[dict[str, object]] = []
+    for category in categories:
+        spent = _spent_milli(category)
+        direction = _direction(category.budgeted, spent, threshold)
+        if direction is None:
+            continue
+        percent_diff = _percent_diff(category.budgeted, spent)
+        budgeted_dollars = _to_dollars(category.budgeted)
+        spent_dollars = _to_dollars(spent)
+        if category.budgeted == 0:
+            reason = (
+                f"Spent ${spent_dollars:.2f} against a $0.00 budget "
+                "(no budget allocated)."
+            )
+        else:
+            reason = (
+                f"Spent ${spent_dollars:.2f} against a ${budgeted_dollars:.2f} "
+                f"budget ({abs(percent_diff):.0%} {direction})."  # type: ignore[arg-type]
+            )
+        flags.append(
+            {
+                "category_id": category.id,
+                "category_name": category.name,
+                "budgeted": budgeted_dollars,
+                "activity": spent_dollars,
+                "direction": direction,
+                "percent_diff": percent_diff,
+                "reason": reason,
+            }
+        )
+    return flags
