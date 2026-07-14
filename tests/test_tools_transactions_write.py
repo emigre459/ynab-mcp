@@ -1,5 +1,6 @@
 """Tests for ynab_mcp.tools.transactions_write."""
 
+import json
 from types import SimpleNamespace
 
 import ynab
@@ -59,8 +60,30 @@ def test_bulk_manage_transactions_handles_mixed_batch(mocker: MockerFixture) -> 
     transactions_api.return_value.create_transaction.return_value = SimpleNamespace(
         data=SimpleNamespace(transactions=[SimpleNamespace(id="new-1")])
     )
-    transactions_api.return_value.update_transactions.return_value = SimpleNamespace(
-        data=SimpleNamespace(transactions=[SimpleNamespace(id="txn-1")])
+    updated_raw = json.dumps(
+        {
+            "data": {
+                "transaction_ids": ["txn-1"],
+                "transactions": [
+                    {
+                        "id": "txn-1",
+                        "date": "2026-07-14",
+                        "amount": -5000,
+                        "cleared": "uncleared",
+                        "approved": True,
+                        "deleted": False,
+                        "account_id": "11111111-1111-1111-1111-111111111111",
+                        "account_name": "test account",
+                        "subtransactions": [],
+                    }
+                ],
+                "duplicate_import_ids": [],
+                "server_knowledge": 1,
+            }
+        }
+    ).encode()
+    transactions_api.return_value.update_transactions_with_http_info.return_value = (
+        SimpleNamespace(raw_data=updated_raw)
     )
     transactions_api.return_value.delete_transaction.return_value = SimpleNamespace(
         data=SimpleNamespace(transaction=SimpleNamespace(id="txn-2"))
@@ -97,7 +120,9 @@ def test_bulk_manage_transactions_handles_mixed_batch(mocker: MockerFixture) -> 
     )
     assert created_wrapper.transactions[0].amount == -5000
 
-    update_call = transactions_api.return_value.update_transactions.call_args
+    update_call = (
+        transactions_api.return_value.update_transactions_with_http_info.call_args
+    )
     updated_wrapper = update_call.kwargs["data"]
     assert updated_wrapper.transactions[0].id == "txn-1"
     assert (
@@ -118,8 +143,30 @@ def test_bulk_manage_transactions_reports_per_item_failure(
     transactions_api = mocker.patch(
         "ynab_mcp.tools.transactions_write.ynab.TransactionsApi"
     )
-    transactions_api.return_value.update_transactions.return_value = SimpleNamespace(
-        data=SimpleNamespace(transactions=[SimpleNamespace(id="txn-1")])
+    updated_raw = json.dumps(
+        {
+            "data": {
+                "transaction_ids": ["txn-1"],
+                "transactions": [
+                    {
+                        "id": "txn-1",
+                        "date": "2026-07-14",
+                        "amount": -5000,
+                        "cleared": "uncleared",
+                        "approved": True,
+                        "deleted": False,
+                        "account_id": "11111111-1111-1111-1111-111111111111",
+                        "account_name": "test account",
+                        "subtransactions": [],
+                    }
+                ],
+                "duplicate_import_ids": [],
+                "server_knowledge": 1,
+            }
+        }
+    ).encode()
+    transactions_api.return_value.update_transactions_with_http_info.return_value = (
+        SimpleNamespace(raw_data=updated_raw)
     )
     transactions_api.return_value.delete_transaction.side_effect = ynab.ApiException(
         status=404,
@@ -249,3 +296,56 @@ def test_bulk_manage_transactions_reports_error_for_invalid_uuid_field(
         "detail": None,
     }
     transactions_api.return_value.create_transaction.assert_not_called()
+
+
+def test_bulk_manage_transactions_update_parses_raw_response_directly(
+    mocker: MockerFixture,
+) -> None:
+    """The update group parses raw_data directly via update_transactions_with_http_info.
+
+    Works around a real bug in the installed ynab SDK (v4.2.0): its
+    generated status-code map for update_transactions keys off '209'
+    instead of the '200' YNAB actually returns, so the convenience
+    method's deserialization silently yields None on a real success.
+    """
+    client = mocker.Mock()
+    transactions_api = mocker.patch(
+        "ynab_mcp.tools.transactions_write.ynab.TransactionsApi"
+    )
+    raw_body = json.dumps(
+        {
+            "data": {
+                "transaction_ids": ["txn-1"],
+                "transactions": [
+                    {
+                        "id": "txn-1",
+                        "date": "2026-07-14",
+                        "amount": -15000,
+                        "cleared": "uncleared",
+                        "approved": True,
+                        "deleted": False,
+                        "account_id": "11111111-1111-1111-1111-111111111111",
+                        "account_name": "test account",
+                        "subtransactions": [],
+                    }
+                ],
+                "duplicate_import_ids": [],
+                "server_knowledge": 1,
+            }
+        }
+    ).encode()
+    transactions_api.return_value.update_transactions_with_http_info.return_value = (
+        SimpleNamespace(raw_data=raw_body)
+    )
+
+    operations: list[dict[str, object]] = [
+        {"action": "update", "id": "txn-1", "approved": True},
+    ]
+
+    result = bulk_manage_transactions(client, "budget-1", operations)
+
+    assert result == [
+        {"action": "update", "id": "txn-1", "status": "ok", "detail": None}
+    ]
+    transactions_api.return_value.update_transactions_with_http_info.assert_called_once()
+    transactions_api.return_value.update_transactions.assert_not_called()
