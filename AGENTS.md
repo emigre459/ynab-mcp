@@ -59,7 +59,12 @@ tools:
   imports `parse_month` from `months.py`; `payee_patterns.py` imports
   `list_payees`/`list_transactions` from `payees.py`/`transactions.py` to
   build `find-payee-transactions`, a read-and-aggregate tool with no new
-  YNAB API surface of its own).
+  YNAB API surface of its own; `spend_analysis.py` imports `parse_month`
+  from `months.py` and wraps `MonthsApi.get_plan_month` directly to build
+  `flag-category-spend` and `analyze-category-trends` — two tools sharing
+  one module since both are pure derived-analysis over the same per-month
+  category data, with no new API surface beyond what `months.py` already
+  calls).
 - `server.py` — `build_server()` wires it all together; `list-budgets` is
   registered only when no default budget is configured. `main()` is the
   `uv run ynab-mcp` entry point (`[project.scripts]` in `pyproject.toml`).
