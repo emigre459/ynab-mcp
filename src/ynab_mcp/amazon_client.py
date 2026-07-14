@@ -40,7 +40,12 @@ def build_amazon_session(settings: AmazonSettings) -> AmazonSession:
         A session that will reuse a previously persisted login, if any.
     """
     config = AmazonOrdersConfig(
-        data={"auth_forms_classes": _BROWSER_AUTH_FORMS_CLASSES}
+        data={
+            "auth_forms_classes": _BROWSER_AUTH_FORMS_CLASSES,
+            # The library's 30s default is often too short for a real
+            # challenge round-trip against Amazon's bot-detection.
+            "browser_timeout": 90,
+        }
     )
     return AmazonSession(
         username=settings.amazon_username,

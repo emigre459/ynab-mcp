@@ -40,12 +40,14 @@ def test_build_amazon_session_passes_credentials_and_never_logs_in(
 def test_build_amazon_session_registers_browser_challenge_solvers(
     mocker: MockerFixture,
 ) -> None:
-    """AmazonOrdersConfig is built with the Playwright JS-challenge solvers.
+    """AmazonOrdersConfig is built with the Playwright solvers + a longer timeout.
 
     Real Amazon logins commonly hit a JavaScript-based bot-detection
     challenge; the library's default auth-form chain only *blocks* on this
     (raising with a remediation hint) unless these solver classes are
-    explicitly registered via auth_forms_classes.
+    explicitly registered via auth_forms_classes. The library's default
+    30s browser_timeout can be too short for a real challenge round-trip,
+    so it's bumped to 90s.
     """
     mocker.patch("ynab_mcp.amazon_client.AmazonSession")
     config_cls = mocker.patch("ynab_mcp.amazon_client.AmazonOrdersConfig")
@@ -57,7 +59,8 @@ def test_build_amazon_session_registers_browser_challenge_solvers(
             "auth_forms_classes": [
                 "amazonorders.contrib.browser.playwright.PlaywrightAcicForm",
                 "amazonorders.contrib.browser.playwright.PlaywrightJSAuthForm",
-            ]
+            ],
+            "browser_timeout": 90,
         }
     )
 
