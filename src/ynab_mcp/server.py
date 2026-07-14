@@ -10,6 +10,7 @@ from ynab_mcp.tools import (
     categories,
     lookup,
     months,
+    payee_patterns,
     payees,
     transactions,
 )
@@ -44,6 +45,7 @@ def build_server() -> FastMCP:
     months.register(mcp, client, settings)
     payees.register(mcp, client, settings)
     lookup.register(mcp, client, settings)
+    payee_patterns.register(mcp, client, settings)
 
     return mcp
 
