@@ -1,6 +1,13 @@
 # Changelog
 
 ## 2026-07-13
+- feat: add `flag-category-spend` and `analyze-category-trends` MCP tools
+  (#13) — single-month overspend/underspend flagging against a
+  configurable percentage threshold, and multi-month trend detection for
+  a category whose budget keeps rising while still overspent
+  (`rising_overspend`) or a category persistently underspent
+  (`persistent_underspend`), using a majority-of-months rule so a single
+  anomalous month doesn't trigger a false flag
 - feat: add `find-payee-transactions` MCP tool (#14) — payee/transaction
   pattern lookup with exact/substring/fuzzy payee matching (handling
   inconsistent YNAB payee naming like "AMZN Mktp" vs "Amazon.com"),
