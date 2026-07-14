@@ -40,25 +40,51 @@ established in issue #11 and extended by every later epic-#10 child that adds
 tools:
 
 - `config.py` — `Settings.from_env()` reads `YNAB_PAT` (required, fail-hard),
-  `YNAB_DEFAULT_BUDGET_ID` (optional), `YNAB_READ_ONLY` (parsed, unenforced
-  until write tools exist).
+  `YNAB_DEFAULT_BUDGET_ID` (optional), `YNAB_READ_ONLY` (defaults `true`,
+  enforced by every write tool via `client.require_writable`).
 - `client.py` — builds the single shared `ynab.ApiClient`; `resolve_budget_id`
   is the only place the public `budget_id` terminology (matches YNAB's
   product UI) translates to the SDK's internal `plan_id` (the `ynab` client
   renamed `Budget`→`Plan` in v4). Never let `plan_id` leak into a public tool
-  name/param.
+  name/param. `require_writable(settings)` raises `ToolError` when
+  `YNAB_READ_ONLY=true`; every write tool's registered closure calls it as
+  its first statement, before `resolve_budget_id` and before touching the
+  API — write tools are always *registered* (discoverable in both modes),
+  only *execution* is gated.
 - `errors.py` — `translate_api_exception` maps `ynab.ApiException` →
   `fastmcp.exceptions.ToolError`, carrying YNAB's real error detail, never
   masked.
 - `tools/` — one module per tool group, each with a plain testable function
   plus a thin `@mcp.tool`-registering `register(mcp, client, settings)`
   function (budgets.py's `register` omits `settings` — no default-budget
-  concept applies to listing all budgets).
+  concept applies to listing all budgets). Write-tool modules
+  (`transactions_write.py`, `budgeted_amount.py`, `payees_write.py`,
+  `scheduled_transactions.py`, issue #12) additionally give each registered
+  closure its own required-field validation and a `fastmcp.Client`-based
+  closure-dispatch test — the underlying plain function alone doesn't
+  exercise that branching.
+  - **`transactions_write.py`'s `bulk_manage_transactions` update path
+    cannot use `TransactionsApi.update_transactions()`.** The installed
+    `ynab` SDK (v4.2.0, latest on PyPI) has a real bug: its generated
+    `_response_types_map` for that endpoint keys off HTTP `209` instead of
+    the `200` YNAB actually returns, so the convenience method silently
+    returns `None` on every real, successful call. The fix uses
+    `update_transactions_with_http_info()` and parses `raw_data` directly
+    with `ynab.SaveTransactionsResponse.model_validate_json(...)`,
+    bypassing the broken status-code dispatch. Reported upstream:
+    [ynab/ynab-sdk-python#33](https://github.com/ynab/ynab-sdk-python/issues/33)
+    ([fix PR](https://github.com/ynab/ynab-sdk-python/pull/34)) — if/when a
+    corrected SDK version ships, this workaround can likely be reverted to
+    the plain convenience method (confirm the fix landed before doing so).
 - `server.py` — `build_server()` wires it all together; `list-budgets` is
-  registered only when no default budget is configured. `main()` is the
-  `uv run ynab-mcp` entry point (`[project.scripts]` in `pyproject.toml`).
+  registered only when no default budget is configured; all four write
+  tools are always registered (see `client.require_writable` above).
+  `main()` is the `uv run ynab-mcp` entry point (`[project.scripts]` in
+  `pyproject.toml`).
 
-Design rationale: `docs/superpowers/specs/2026-07-12-core-ynab-mcp-server-design.md`.
+Design rationale: `docs/superpowers/specs/2026-07-12-core-ynab-mcp-server-design.md`
+(read tools), `docs/superpowers/specs/2026-07-12-transaction-budget-write-tools-design.md`
+(write tools).
 
 ## Quality Gates
 
