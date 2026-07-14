@@ -1783,8 +1783,16 @@ def test_bulk_manage_transactions_handles_mixed_batch(mocker: MockerFixture) -> 
     )
 
     operations: list[dict[str, object]] = [
-        {"action": "create", "account_id": "acct-1", "amount": -5000},
-        {"action": "update", "id": "txn-1", "category_id": "cat-1"},
+        {
+            "action": "create",
+            "account_id": "11111111-1111-1111-1111-111111111111",
+            "amount": -5000,
+        },
+        {
+            "action": "update",
+            "id": "txn-1",
+            "category_id": "22222222-2222-2222-2222-222222222222",
+        },
         {"action": "delete", "id": "txn-2"},
     ]
 
@@ -1799,13 +1807,19 @@ def test_bulk_manage_transactions_handles_mixed_batch(mocker: MockerFixture) -> 
     create_call = transactions_api.return_value.create_transaction.call_args
     assert create_call.kwargs["plan_id"] == "budget-1"
     created_wrapper = create_call.kwargs["data"]
-    assert created_wrapper.transactions[0].account_id == "acct-1"
+    assert (
+        str(created_wrapper.transactions[0].account_id)
+        == "11111111-1111-1111-1111-111111111111"
+    )
     assert created_wrapper.transactions[0].amount == -5000
 
     update_call = transactions_api.return_value.update_transactions.call_args
     updated_wrapper = update_call.kwargs["data"]
     assert updated_wrapper.transactions[0].id == "txn-1"
-    assert updated_wrapper.transactions[0].category_id == "cat-1"
+    assert (
+        str(updated_wrapper.transactions[0].category_id)
+        == "22222222-2222-2222-2222-222222222222"
+    )
 
     transactions_api.return_value.delete_transaction.assert_called_once_with(
         plan_id="budget-1", transaction_id="txn-2"
@@ -1831,7 +1845,11 @@ def test_bulk_manage_transactions_reports_per_item_failure(
     )
 
     operations: list[dict[str, object]] = [
-        {"action": "update", "id": "txn-1", "category_id": "cat-1"},
+        {
+            "action": "update",
+            "id": "txn-1",
+            "category_id": "22222222-2222-2222-2222-222222222222",
+        },
         {"action": "delete", "id": "missing-txn"},
     ]
 
@@ -1863,8 +1881,16 @@ def test_bulk_manage_transactions_marks_whole_create_group_error_on_batch_failur
     )
 
     operations: list[dict[str, object]] = [
-        {"action": "create", "account_id": "bad-acct", "amount": -1000},
-        {"action": "create", "account_id": "bad-acct", "amount": -2000},
+        {
+            "action": "create",
+            "account_id": "11111111-1111-1111-1111-111111111111",
+            "amount": -1000,
+        },
+        {
+            "action": "create",
+            "account_id": "11111111-1111-1111-1111-111111111111",
+            "amount": -2000,
+        },
     ]
 
     result = bulk_manage_transactions(client, "budget-1", operations)
