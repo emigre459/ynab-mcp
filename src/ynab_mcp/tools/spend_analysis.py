@@ -94,7 +94,7 @@ def _direction(budgeted: int, spent: int, threshold: float) -> str | None:
     if budgeted == 0:
         return "over" if spent > 0 else None
     percent_diff = (spent - budgeted) / budgeted
-    if abs(percent_diff) < threshold:
+    if percent_diff == 0 or abs(percent_diff) < threshold:
         return None
     return "over" if percent_diff > 0 else "under"
 

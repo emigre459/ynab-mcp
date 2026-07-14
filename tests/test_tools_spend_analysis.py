@@ -57,6 +57,11 @@ def test_direction_within_threshold_is_none() -> None:
     assert _direction(300000, 310000, 0.10) is None
 
 
+def test_direction_zero_threshold_exact_match_is_none() -> None:
+    """Spend exactly equal to budget is never flagged, even at threshold=0."""
+    assert _direction(300000, 300000, 0.0) is None
+
+
 def test_direction_zero_budget_with_spend_is_over() -> None:
     """Any spend against a $0 budget is always 'over'."""
     assert _direction(0, 1, 0.10) == "over"
