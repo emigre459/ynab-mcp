@@ -13,13 +13,19 @@ from ynab_mcp.tools.find_amazon_transactions import find_amazon_transactions
 
 
 def _ynab_txn(
-    mocker: MockerFixture, id_: str, amount: int, txn_date: date, payee: str
+    mocker: MockerFixture,
+    id_: str,
+    amount: int,
+    txn_date: date,
+    payee: str,
+    approved: bool = False,
 ) -> Mock:
     txn = mocker.Mock()
     txn.id = id_
     txn.amount = amount
     txn.var_date = txn_date
     txn.payee_name = payee
+    txn.approved = approved
     txn.model_dump.return_value = {"id": id_, "amount": amount, "payee_name": payee}
     return txn
 
@@ -205,6 +211,70 @@ def test_find_amazon_transactions_excludes_blank_order_numbers(
     unmatched_ids = {u["ynab_transaction"]["id"] for u in result["unmatched"]}  # type: ignore[attr-defined]
     assert unmatched_ids == {"y1", "y2"}
     amazon_orders_client.get_order.assert_not_called()
+
+
+def test_find_amazon_transactions_excludes_approved_by_default(
+    mocker: MockerFixture,
+) -> None:
+    """Already-approved YNAB transactions are excluded from the result set.
+
+    approved=True means a human already reviewed and confirmed the
+    imported bank transaction in YNAB -- it's orthogonal to whether
+    anyone cross-referenced it against the actual Amazon order, but it's
+    the signal the user wants to treat as "already handled, don't
+    resurface." Excluded entirely (not matches, not ambiguous, not
+    unmatched) so the result set stays focused on outstanding review work.
+    """
+    ynab_client = mocker.Mock()
+    list_transactions = mocker.patch(
+        "ynab_mcp.tools.find_amazon_transactions.list_transactions"
+    )
+    list_transactions.return_value = [
+        _ynab_txn(mocker, "y1", -259900, date(2026, 6, 1), "Amazon.com", approved=True),
+    ]
+    amazon_transactions_client = mocker.Mock()
+    amazon_transactions_client.get_transactions.return_value = [
+        _amazon_txn("111-1111111", -259.90, date(2026, 6, 1)),
+    ]
+    amazon_orders_client = mocker.Mock()
+
+    result = find_amazon_transactions(
+        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+    )
+
+    assert result["matches"] == []
+    assert result["ambiguous"] == []
+    assert result["unmatched"] == []
+    amazon_orders_client.get_order.assert_not_called()
+
+
+def test_find_amazon_transactions_includes_approved_when_requested(
+    mocker: MockerFixture,
+) -> None:
+    """include_approved=True opts back into matching approved transactions."""
+    ynab_client = mocker.Mock()
+    list_transactions = mocker.patch(
+        "ynab_mcp.tools.find_amazon_transactions.list_transactions"
+    )
+    list_transactions.return_value = [
+        _ynab_txn(mocker, "y1", -259900, date(2026, 6, 1), "Amazon.com", approved=True),
+    ]
+    amazon_transactions_client = mocker.Mock()
+    amazon_transactions_client.get_transactions.return_value = [
+        _amazon_txn("111-1111111", -259.90, date(2026, 6, 1)),
+    ]
+    amazon_orders_client = mocker.Mock()
+    amazon_orders_client.get_order.return_value = _order(["Widget"])
+
+    result = find_amazon_transactions(
+        ynab_client,
+        amazon_transactions_client,
+        amazon_orders_client,
+        "budget-1",
+        include_approved=True,
+    )
+
+    assert len(result["matches"]) == 1  # type: ignore[arg-type]
 
 
 def test_find_amazon_transactions_translates_auth_error(mocker: MockerFixture) -> None:

@@ -104,6 +104,7 @@ def find_amazon_transactions(
     since_date: date | None = None,
     until_date: date | None = None,
     date_window_days: int = 3,
+    include_approved: bool = False,
 ) -> dict[str, object]:
     """Match YNAB transactions against Amazon order/transaction history.
 
@@ -127,6 +128,14 @@ def find_amazon_transactions(
     date_window_days : int, optional
         Maximum number of days apart a YNAB and Amazon date may be and
         still count as a match, by default ``3``.
+    include_approved : bool, optional
+        Whether to consider YNAB transactions already marked ``approved``,
+        by default ``False``. ``approved`` means a human confirmed the
+        imported bank transaction happened -- it says nothing about
+        whether the category assigned is actually correct -- but it's a
+        reasonable proxy for "already reviewed, not outstanding work," so
+        approved transactions are excluded by default to keep the result
+        set focused on what still needs review.
 
     Returns
     -------
@@ -144,7 +153,9 @@ def find_amazon_transactions(
         ynab_client, budget_id, since_date=since_date, until_date=until_date
     )
     amazon_like_txns = [
-        t for t in ynab_transactions if _is_amazon_like_payee(t.payee_name)
+        t
+        for t in ynab_transactions
+        if _is_amazon_like_payee(t.payee_name) and (include_approved or not t.approved)
     ]
     ynab_by_id = {t.id: t for t in amazon_like_txns}
     ynab_candidates = [
@@ -289,6 +300,7 @@ def register(
         since_date: date | None = None,
         until_date: date | None = None,
         date_window_days: int = 3,
+        include_approved: bool = False,
     ) -> dict[str, object]:
         """Match YNAB transactions against Amazon order/transaction history.
 
@@ -309,6 +321,11 @@ def register(
         date_window_days : int, optional
             Maximum number of days apart a YNAB and Amazon date may be and
             still count as a match, by default ``3``.
+        include_approved : bool, optional
+            Whether to consider YNAB transactions already marked
+            ``approved`` (already reviewed by a human in YNAB), by default
+            ``False`` -- keeps the result set focused on outstanding
+            review work.
         """
         resolved_budget_id = resolve_budget_id(budget_id, settings)
         return find_amazon_transactions(
@@ -319,4 +336,5 @@ def register(
             since_date=since_date,
             until_date=until_date,
             date_window_days=date_window_days,
+            include_approved=include_approved,
         )
