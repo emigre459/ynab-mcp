@@ -103,7 +103,7 @@ If step 1 or step 2 fails, no mutation has happened yet (step 1 is read-only, st
 
 **rename:** one `PayeesApi.update_payee` call setting `name = new_name`.
 
-**merge:** `PayeesApi.get_payee_by_id(target_payee_id)` to read the target's current name, then `update_payee(source_payee_id, name=<target's name>)`. Setting a payee's name to exactly match an existing payee's name is YNAB's documented server-side merge trigger — no explicit delete call exists or is needed; YNAB retires the source payee automatically. Returns `{"merged_into": {"id": target_payee_id, "name": <name>}}`.
+**merge:** `PayeesApi.get_payee_by_id(target_payee_id)` to read the target's current name, then `update_payee(source_payee_id, name=<target's name>)`. Setting a payee's name to exactly match an existing payee's name is YNAB's documented server-side merge trigger — no explicit delete call exists or is needed; YNAB retires the source payee automatically. Returns the renamed source payee's `model_dump(mode="json")` (same shape as `rename`'s return value) — the payee object as returned by the rename call, now carrying the target's name.
 
 ### `manage-scheduled-transaction`
 
