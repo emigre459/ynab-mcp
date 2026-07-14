@@ -96,12 +96,18 @@ def move_budgeted_amount(
     Raises
     ------
     fastmcp.exceptions.ToolError
-        If ``month`` is invalid, if reading either category fails, or if
-        the move itself fails. When the target update fails after the
-        source was decremented, the error states whether the rollback
-        succeeded or, if it also failed, exactly which category/month/
-        amount is left inconsistent.
+        If ``from_category_id`` equals ``to_category_id`` (reading the
+        same category twice then writing it twice with a stale
+        intermediate value would silently inflate its budgeted amount
+        instead of leaving it unchanged), if ``month`` is invalid, if
+        reading either category fails, or if the move itself fails. When
+        the target update fails after the source was decremented, the
+        error states whether the rollback succeeded or, if it also
+        failed, exactly which category/month/amount is left inconsistent.
     """
+    if from_category_id == to_category_id:
+        raise ToolError("from_category_id and to_category_id must differ.")
+
     resolved_month = parse_month(month)
     api = ynab.CategoriesApi(client)
     try:

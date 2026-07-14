@@ -82,6 +82,26 @@ def test_move_budgeted_amount_decrements_source_and_increments_target(
     assert update_calls[1].kwargs["data"].category.budgeted == 40000
 
 
+def test_move_budgeted_amount_rejects_same_category(mocker: MockerFixture) -> None:
+    """Moving a category into itself is rejected before any API call.
+
+    Without this guard, the category is read once, decremented, then
+    re-incremented using the stale pre-move value -- net effect: the
+    category's budgeted amount increases by `amount` instead of staying
+    unchanged, silently corrupting the budget.
+    """
+    client = mocker.Mock()
+    categories_api = mocker.patch("ynab_mcp.tools.budgeted_amount.ynab.CategoriesApi")
+
+    with raises(ToolError, match="from_category_id and to_category_id must differ"):
+        move_budgeted_amount(
+            client, "budget-1", "current", "same-cat", "same-cat", 20000
+        )
+
+    categories_api.return_value.get_month_category_by_id.assert_not_called()
+    categories_api.return_value.update_month_category.assert_not_called()
+
+
 def test_move_budgeted_amount_rolls_back_source_on_target_failure(
     mocker: MockerFixture,
 ) -> None:
