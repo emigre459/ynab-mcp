@@ -1754,6 +1754,17 @@ def build_server() -> FastMCP:
     return mcp
 ```
 
+**Correction from live testing (2026-07-14):** this task's code never called
+`amazon_session.login()`, so every tool call failed with `"Call AmazonSession.login() to
+authenticate first."` even with a valid persisted session -- `amazon-orders` only sets
+`AmazonSession.is_authenticated = True` inside `.login()`, never from loading cookies at
+construction time alone. Fixed by calling `amazon_session.login()` once here, wrapped in
+`try/except AmazonOrdersError` (printing to stderr and skipping registration on failure,
+fail-soft) before building the orders/transactions clients. See
+`src/ynab_mcp/server.py` for the corrected code and `tests/test_server.py` for the two
+tests this added (`..._when_configured` now asserts `login()` was called;
+`..._when_login_fails` covers the new fail-soft branch).
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_server.py -v`

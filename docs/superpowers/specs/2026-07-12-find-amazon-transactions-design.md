@@ -114,12 +114,23 @@ browser through the challenge automatically. Requires a one-time
   that builds an `AmazonSession` from `AmazonSettings.from_env()` and calls `.login()`
   interactively, letting the library persist its session to disk as it normally does.
   Run once (or again after the session expires).
-- `amazon_client.py`'s factory only *reuses* an existing persisted session — it never
-  calls `.login()`. If the session is missing/expired, the first real API call raises,
-  which `find_amazon_transactions`'s tool wrapper turns into a `ToolError` telling the
-  user to re-run `scripts/amazon_login.py` (see Error handling below).
 - `server.py` registers `find-amazon-transactions` only when `AmazonSettings.from_env()`
   succeeds — an unconfigured server never even attempts to build the Amazon client.
+
+**Correction from live testing (2026-07-14):** the original design said
+`amazon_client.py`'s factory "only reuses an existing persisted session — it never calls
+`.login()`," and that a missing/expired session would only surface on the first real API
+call. This was wrong: `amazon-orders`' `AmazonOrders`/`AmazonTransactions` methods gate on
+`AmazonSession.is_authenticated`, which is set `True` **only** inside `.login()` — loading
+persisted cookies at construction time is not sufficient by itself, so every tool call
+failed with `"Call AmazonSession.login() to authenticate first."` regardless of a valid
+persisted session. `login()`'s own docstring confirms calling it is safe outside a tool
+call: it fast-paths to a single request when valid cookies are already persisted (no
+interactive challenge), and only drives the full auth-form chain when the session is
+genuinely missing/expired. The fix: `server.py` calls `amazon_session.login()` exactly
+**once**, at startup, right after `build_amazon_session()` — never inside a tool call, but
+no longer skipped entirely either. On failure it's caught and the tool is skipped for that
+run (fail-soft, printed to stderr) rather than registered in a permanently-broken state.
 
 ## Matching algorithm (`amazon_matching.py`)
 
@@ -231,9 +242,14 @@ explicit out-of-scope note (applying matches is card #12's job).
 - `AmazonSettings.from_env()` returning `None` → `find-amazon-transactions` is never
   registered on the server (see `server.py` change below); no runtime "not configured"
   error path is needed.
-- Amazon session missing/expired at call time → the underlying `amazon-orders` call
-  raises; the tool wrapper catches it and raises `fastmcp.exceptions.ToolError` with a
-  message pointing the user to `uv run python scripts/amazon_login.py`.
+- Amazon session missing/expired **at server startup** → `amazon_session.login()`
+  (called once in `server.py`, see the correction note above) raises; caught there,
+  logged to stderr, and the tool is skipped for this run rather than registered.
+- Amazon session missing/expired **mid-call** (e.g. it expired between server startup
+  and this call) → the underlying `amazon-orders` call raises; the tool wrapper catches
+  it and raises `fastmcp.exceptions.ToolError` with a message pointing the user to
+  `uv run python scripts/amazon_login.py` (server restart required to pick up the
+  refreshed session, since `login()` only runs once at startup).
 - YNAB API failures continue to go through the existing `translate_api_exception`
   helper, reused as-is.
 
@@ -242,12 +258,21 @@ explicit out-of-scope note (applying matches is card #12's job).
 ```python
 amazon_settings = AmazonSettings.from_env()
 if amazon_settings is not None:
-    amazon_transactions_client = build_amazon_transactions(amazon_settings)
-    amazon_orders_client = build_amazon_orders(amazon_settings)
-    find_amazon_transactions.register(
-        mcp, client, amazon_transactions_client, amazon_orders_client, settings
-    )
+    amazon_session = build_amazon_session(amazon_settings)
+    try:
+        amazon_session.login()
+    except AmazonOrdersError as exc:
+        print(f"Amazon session unavailable, skipping: {exc}", file=sys.stderr)
+    else:
+        amazon_orders_client = build_amazon_orders(amazon_session)
+        amazon_transactions_client = build_amazon_transactions(amazon_session)
+        find_amazon_transactions.register(
+            mcp, client, amazon_transactions_client, amazon_orders_client, settings
+        )
 ```
+
+(Updated per the "Correction from live testing" note above — the original design didn't
+call `login()` here at all.)
 
 Conditional registration mirrors the existing `list-budgets` pattern (registered only
 when no default budget is configured) — same shape, different condition.
