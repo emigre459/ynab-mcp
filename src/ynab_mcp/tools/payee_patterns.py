@@ -143,6 +143,11 @@ class PayeeGroupSummary:
 def _most_common_category(transactions: list[ynab.TransactionDetail]) -> str | None:
     """Find the most frequent category name among a group's transactions.
 
+    A split transaction's own ``category_name`` is always the literal
+    string ``"Split"`` (never a real category) -- its subtransactions
+    carry the actual per-line-item categories, so those are counted
+    instead of the parent's "Split" placeholder.
+
     Parameters
     ----------
     transactions : list[ynab.TransactionDetail]
@@ -151,10 +156,19 @@ def _most_common_category(transactions: list[ynab.TransactionDetail]) -> str | N
     Returns
     -------
     str | None
-        The most common ``category_name``, or ``None`` if no transaction
-        has a category.
+        The most common category name, or ``None`` if no transaction (or
+        subtransaction, for splits) has a category.
     """
-    categories = [t.category_name for t in transactions if t.category_name]
+    categories: list[str] = []
+    for transaction in transactions:
+        if transaction.category_name == "Split":
+            categories.extend(
+                sub.category_name
+                for sub in transaction.subtransactions
+                if sub.category_name
+            )
+        elif transaction.category_name:
+            categories.append(transaction.category_name)
     if not categories:
         return None
     return Counter(categories).most_common(1)[0][0]

@@ -67,8 +67,20 @@ def test_match_payees_no_match() -> None:
     assert matches == []
 
 
-def _transaction(amount: int, category_name: str | None) -> SimpleNamespace:
-    return SimpleNamespace(amount=amount, category_name=category_name)
+def _transaction(
+    amount: int,
+    category_name: str | None,
+    subtransactions: list[SimpleNamespace] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        amount=amount,
+        category_name=category_name,
+        subtransactions=subtransactions or [],
+    )
+
+
+def _subtransaction(category_name: str | None) -> SimpleNamespace:
+    return SimpleNamespace(category_name=category_name)
 
 
 def test_summarize_group_computes_stats() -> None:
@@ -97,6 +109,35 @@ def test_summarize_group_computes_stats() -> None:
     assert summary.amount_range.min == -5500
     assert summary.amount_range.max == -4500
     assert summary.most_common_category == "Dining Out"
+
+
+def test_summarize_group_uses_subtransaction_categories_for_split_transactions() -> (
+    None
+):
+    """A split transaction's own "Split" category_name is never counted.
+
+    Its subtransactions' real categories are counted instead.
+    """
+    matched = _MatchedPayee(
+        payee=SimpleNamespace(id="p1", name="Costco"),  # type: ignore[arg-type]
+        match_type="exact",
+        match_score=None,
+    )
+    transactions = [
+        _transaction(
+            -10000,
+            "Split",
+            subtransactions=[
+                _subtransaction("Groceries"),
+                _subtransaction("Groceries"),
+            ],
+        ),
+        _transaction(-3000, "Dining Out"),
+    ]
+
+    summary = _summarize_group(matched, transactions)  # type: ignore[arg-type]
+
+    assert summary.most_common_category == "Groceries"
 
 
 def test_summarize_group_no_common_category_when_uncategorized() -> None:
