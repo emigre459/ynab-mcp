@@ -14,6 +14,12 @@ Python backend managed with `uv`. Run `make deps` then `make pr_check`.
 3. To use this server from Claude Code, copy `.mcp.json.example` to
    `.mcp.json` and set the `--directory` arg to this repo's absolute path
    on your machine (`.mcp.json` is gitignored — it's machine-specific).
+4. Optionally set `AMAZON_USERNAME`/`AMAZON_PASSWORD` (and
+   `AMAZON_OTP_SECRET_KEY` if your account uses OTP-based 2FA) to enable
+   the `find-amazon-transactions` tool. Then run `uv run playwright install
+   chromium` once (handles Amazon's JavaScript-based login challenges) and
+   `uv run python scripts/amazon_login.py` to establish a session — see
+   that script's docstring for details.
 
 ## Running
 
@@ -59,6 +65,13 @@ Read-only tools, backed by the official `ynab` PyPI client:
   overspent (`rising_overspend`) or a category persistently underspent
   (`persistent_underspend`), using a majority-of-months rule so one
   anomalous month doesn't trigger a false flag.
+
+Registered only when Amazon credentials are configured:
+
+- `find-amazon-transactions` — matches YNAB transactions against real
+  Amazon order/transaction history and proposes categorizations with
+  confidence/reasoning. Read-only — never writes a categorization back to
+  YNAB.
 
 Write/mutation tools are out of scope for this server (a follow-up card).
 

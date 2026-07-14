@@ -3,6 +3,7 @@
 import json
 import logging
 
+from amazonorders.exception import AmazonOrdersAuthError, AmazonOrdersError
 import ynab
 from fastmcp.exceptions import ToolError
 
@@ -26,6 +27,32 @@ def translate_api_exception(exc: ynab.ApiException) -> ToolError:
     detail = _extract_detail(exc)
     logger.error("YNAB API request failed (status=%s): %s", exc.status, detail)
     return ToolError(detail)
+
+
+def translate_amazon_exception(exc: AmazonOrdersError) -> ToolError:
+    """Convert an ``amazon-orders`` exception into a FastMCP ``ToolError``.
+
+    Parameters
+    ----------
+    exc : amazonorders.exception.AmazonOrdersError
+        The exception raised by an ``amazon-orders`` library call.
+
+    Returns
+    -------
+    fastmcp.exceptions.ToolError
+        A ``ToolError`` describing the failure. Authentication failures get
+        a remediation hint pointing at ``scripts/amazon_login.py``, since
+        that's the only way to re-establish a session -- this tool never
+        attempts an interactive login itself.
+    """
+    if isinstance(exc, AmazonOrdersAuthError):
+        logger.error("Amazon session is missing or expired: %s", exc)
+        return ToolError(
+            "Amazon session is missing or expired. Run "
+            "`uv run python scripts/amazon_login.py` to log in again."
+        )
+    logger.error("Amazon orders request failed: %s", exc)
+    return ToolError(f"Amazon orders request failed: {exc}")
 
 
 def _extract_detail(exc: ynab.ApiException) -> str:

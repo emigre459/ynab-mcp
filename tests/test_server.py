@@ -3,7 +3,9 @@
 import asyncio
 
 import pytest
+from amazonorders.exception import AmazonOrdersAuthError
 from fastmcp import Client, FastMCP
+from pytest_mock import MockerFixture
 
 from ynab_mcp.server import build_server
 
@@ -89,3 +91,68 @@ def test_build_server_registers_all_other_tools(
         "flag-category-spend",
         "analyze-category-trends",
     }
+
+
+def test_build_server_registers_find_amazon_transactions_when_configured(
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    """The Amazon tool is registered when login() succeeds at startup."""
+    monkeypatch.setattr("ynab_mcp.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("YNAB_PAT", "test-token")
+    monkeypatch.setenv("YNAB_DEFAULT_BUDGET_ID", "budget-123")
+    monkeypatch.setenv("AMAZON_USERNAME", "user@example.com")
+    monkeypatch.setenv("AMAZON_PASSWORD", "hunter2")
+    monkeypatch.delenv("AMAZON_OTP_SECRET_KEY", raising=False)
+    build_amazon_session = mocker.patch("ynab_mcp.server.build_amazon_session")
+    mocker.patch("ynab_mcp.server.build_amazon_orders")
+    mocker.patch("ynab_mcp.server.build_amazon_transactions")
+
+    mcp = build_server()
+
+    tool_names = _list_tool_names(mcp)
+    assert "find-amazon-transactions" in tool_names
+    build_amazon_session.return_value.login.assert_called_once_with()
+
+
+def test_build_server_omits_find_amazon_transactions_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Amazon tool is absent when Amazon credentials are unset."""
+    monkeypatch.setattr("ynab_mcp.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("YNAB_PAT", "test-token")
+    monkeypatch.setenv("YNAB_DEFAULT_BUDGET_ID", "budget-123")
+    monkeypatch.delenv("AMAZON_USERNAME", raising=False)
+    monkeypatch.delenv("AMAZON_PASSWORD", raising=False)
+
+    mcp = build_server()
+
+    tool_names = _list_tool_names(mcp)
+    assert "find-amazon-transactions" not in tool_names
+
+
+def test_build_server_omits_find_amazon_transactions_when_login_fails(
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    """A session that can't authenticate at startup doesn't register the tool.
+
+    Fail-soft, matching the "Amazon unconfigured" case: a broken/expired
+    Amazon session shouldn't take down the whole YNAB server, just disable
+    the Amazon tool for this run.
+    """
+    monkeypatch.setattr("ynab_mcp.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("YNAB_PAT", "test-token")
+    monkeypatch.setenv("YNAB_DEFAULT_BUDGET_ID", "budget-123")
+    monkeypatch.setenv("AMAZON_USERNAME", "user@example.com")
+    monkeypatch.setenv("AMAZON_PASSWORD", "hunter2")
+    monkeypatch.delenv("AMAZON_OTP_SECRET_KEY", raising=False)
+    build_amazon_session = mocker.patch("ynab_mcp.server.build_amazon_session")
+    build_amazon_session.return_value.login.side_effect = AmazonOrdersAuthError(
+        "session expired"
+    )
+    mocker.patch("ynab_mcp.server.build_amazon_orders")
+    mocker.patch("ynab_mcp.server.build_amazon_transactions")
+
+    mcp = build_server()
+
+    tool_names = _list_tool_names(mcp)
+    assert "find-amazon-transactions" not in tool_names

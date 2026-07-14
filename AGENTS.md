@@ -41,15 +41,36 @@ tools:
 
 - `config.py` — `Settings.from_env()` reads `YNAB_PAT` (required, fail-hard),
   `YNAB_DEFAULT_BUDGET_ID` (optional), `YNAB_READ_ONLY` (parsed, unenforced
-  until write tools exist).
+  until write tools exist). `AmazonSettings.from_env()` reads
+  `AMAZON_USERNAME`/`AMAZON_PASSWORD`/`AMAZON_OTP_SECRET_KEY` — fail-**soft**
+  (returns `None`, never raises), the deliberate asymmetry with `Settings`:
+  Amazon integration is optional server-wide functionality.
 - `client.py` — builds the single shared `ynab.ApiClient`; `resolve_budget_id`
   is the only place the public `budget_id` terminology (matches YNAB's
   product UI) translates to the SDK's internal `plan_id` (the `ynab` client
   renamed `Budget`→`Plan` in v4). Never let `plan_id` leak into a public tool
   name/param.
+- `amazon_client.py` — builds the shared `AmazonSession`/`AmazonOrders`/
+  `AmazonTransactions` clients when Amazon is configured. Registers
+  `amazonorders.contrib.browser.playwright`'s `PlaywrightAcicForm`/
+  `PlaywrightJSAuthForm` (requires the `amazon-orders[browser]` extra +
+  `uv run playwright install chromium`) so real Amazon logins can clear
+  JavaScript bot-detection challenges automatically. Never calls
+  `.login()` itself — an MCP tool call can't handle an interactive
+  challenge mid-request — but `server.py` calls it once at startup (see
+  below); the persisted session from `scripts/amazon_login.py` makes that
+  fast (no interactive step) in the common case.
+- `amazon_matching.py` — pure, zero-I/O merge-key algorithm joining YNAB
+  transactions to Amazon `Transaction` records (exact amount + date-window,
+  classified exact/near-date/split-shipment/ambiguous/no-match). No
+  dependency on the `ynab` or `amazon-orders` SDKs — both sides are
+  pre-converted into small dataclasses by the caller, so it's fully
+  fixture-testable.
 - `errors.py` — `translate_api_exception` maps `ynab.ApiException` →
   `fastmcp.exceptions.ToolError`, carrying YNAB's real error detail, never
-  masked.
+  masked. `translate_amazon_exception` does the same for
+  `amazonorders.exception.AmazonOrdersError`, with a remediation hint
+  pointing at `scripts/amazon_login.py` for auth-specific failures.
 - `tools/` — one module per tool group, each with a plain testable function
   plus a thin `@mcp.tool`-registering `register(mcp, client, settings)`
   function (budgets.py's `register` omits `settings` — no default-budget
@@ -64,12 +85,29 @@ tools:
   `flag-category-spend` and `analyze-category-trends` — two tools sharing
   one module since both are pure derived-analysis over the same per-month
   category data, with no new API surface beyond what `months.py` already
-  calls).
+  calls; `find_amazon_transactions.py` additionally takes the Amazon
+  clients and reuses `transactions.py`'s `list_transactions()` rather than
+  re-implementing YNAB fetching).
 - `server.py` — `build_server()` wires it all together; `list-budgets` is
-  registered only when no default budget is configured. `main()` is the
-  `uv run ynab-mcp` entry point (`[project.scripts]` in `pyproject.toml`).
+  registered only when no default budget is configured.
+  `find-amazon-transactions` is registered only when `AmazonSettings.from_env()`
+  succeeds **and** `amazon_session.login()` succeeds at startup (caught and
+  logged to stderr on failure, fail-soft — a broken/expired Amazon session
+  never takes down the whole YNAB server). `main()` is the `uv run ynab-mcp`
+  entry point (`[project.scripts]` in `pyproject.toml`).
 
-Design rationale: `docs/superpowers/specs/2026-07-12-core-ynab-mcp-server-design.md`.
+Design rationale: `docs/superpowers/specs/2026-07-12-core-ynab-mcp-server-design.md`
+(core server), `docs/superpowers/specs/2026-07-12-find-amazon-transactions-design.md`
+(Amazon matching — includes several "Correction from live testing" notes worth
+reading before touching this area again: a `grand_total` sign-convention gotcha,
+why blank `order_number`s must still be matchable, and the login-at-startup fix).
+
+### One-time setup for `find-amazon-transactions`
+
+`scripts/amazon_login.py` establishes the persisted Amazon session
+out-of-band (interactive; can solve JS challenges via a headless browser).
+Run `uv run playwright install chromium` once per machine first. See the
+script's docstring and `README.md`'s Setup section.
 
 ## Quality Gates
 

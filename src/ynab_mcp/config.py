@@ -64,3 +64,55 @@ class Settings:
             ynab_default_budget_id=default_budget_id,
             ynab_read_only=ynab_read_only,
         )
+
+
+@dataclass(frozen=True)
+class AmazonSettings:
+    """Amazon credentials for the find-amazon-transactions tool.
+
+    Parameters
+    ----------
+    amazon_username : str
+        The Amazon account email/username used to authenticate.
+    amazon_password : str
+        The Amazon account password used to authenticate.
+    amazon_otp_secret_key : str | None
+        The TOTP secret key for automatic OTP-based 2FA solving, if the
+        account has 2FA enabled.
+    """
+
+    amazon_username: str
+    amazon_password: str
+    amazon_otp_secret_key: str | None
+
+    @classmethod
+    def from_env(cls) -> "AmazonSettings | None":
+        """Build ``AmazonSettings`` from the process environment.
+
+        Loads `.env` first (safe to call even if ``Settings.from_env()``
+        already did, so this also works when called standalone from
+        ``scripts/amazon_login.py``), then reads ``AMAZON_USERNAME``,
+        ``AMAZON_PASSWORD``, and ``AMAZON_OTP_SECRET_KEY``.
+
+        Returns
+        -------
+        AmazonSettings | None
+            The parsed Amazon configuration, or ``None`` if
+            ``AMAZON_USERNAME`` or ``AMAZON_PASSWORD`` is unset. Unlike
+            ``Settings.from_env``, this does not raise -- Amazon
+            integration is optional server-wide functionality.
+        """
+        load_dotenv()
+
+        username = os.environ.get("AMAZON_USERNAME", "").strip()
+        password = os.environ.get("AMAZON_PASSWORD", "").strip()
+        if not username or not password:
+            return None
+
+        otp_secret_key = os.environ.get("AMAZON_OTP_SECRET_KEY", "").strip() or None
+
+        return cls(
+            amazon_username=username,
+            amazon_password=password,
+            amazon_otp_secret_key=otp_secret_key,
+        )
