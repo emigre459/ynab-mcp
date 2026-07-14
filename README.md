@@ -31,7 +31,7 @@ npx @modelcontextprotocol/inspector uv run ynab-mcp
 ```
 
 In the Inspector UI: click **Connect**, then **List Tools** — you should
-see all 9 tools listed in [Tools](#tools) below (or 8, with `list-budgets`
+see all 10 tools listed in [Tools](#tools) below (or 9, with `list-budgets`
 hidden, if you set `YNAB_DEFAULT_BUDGET_ID`). Run `list-budgets` (or
 `list-accounts` with a `budget_id`) and confirm it returns your real YNAB
 data, not an error.
@@ -49,6 +49,9 @@ Read-only tools, backed by the official `ynab` PyPI client:
 - `get-month-info` — budget totals and category detail for a month.
 - `lookup-entity-by-id` — fetch a single account/category/payee/
   transaction/month by id.
+- `find-payee-transactions` — search payees by name (exact/substring/fuzzy)
+  and summarize each match's transaction patterns (typical amount,
+  category, recurring-charge guess).
 - `flag-category-spend` — flag categories over/under budget by more than a
   configurable `threshold` (default 10%) for a single month.
 - `analyze-category-trends` — walk a trailing window of months
