@@ -25,38 +25,28 @@ def test_create_scheduled_transaction_calls_create(mocker: MockerFixture) -> Non
     api = mocker.patch(
         "ynab_mcp.tools.scheduled_transactions.ynab.ScheduledTransactionsApi"
     )
-    save_st_mock = mocker.patch(
-        "ynab_mcp.tools.scheduled_transactions.ynab.SaveScheduledTransaction"
-    )
-    wrapper_mock = mocker.patch(
-        "ynab_mcp.tools.scheduled_transactions.ynab.PostScheduledTransactionWrapper"
-    )
-
-    # Configure mocks to preserve arguments
-    def save_st_side_effect(**kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(**kwargs)
-
-    save_st_mock.side_effect = save_st_side_effect
-
-    def wrapper_side_effect(**kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(**kwargs)
-
-    wrapper_mock.side_effect = wrapper_side_effect
-
     fake_scheduled = SimpleNamespace(id="st1")
     api.return_value.create_scheduled_transaction.return_value = SimpleNamespace(
         data=SimpleNamespace(scheduled_transaction=fake_scheduled)
     )
 
     result = create_scheduled_transaction(
-        client, "budget-1", "acct-1", date(2024, 3, 1), -50000, "monthly"
+        client,
+        "budget-1",
+        "11111111-1111-1111-1111-111111111111",
+        date(2024, 3, 1),
+        -50000,
+        "monthly",
     )
 
     assert result == fake_scheduled
     call = api.return_value.create_scheduled_transaction.call_args
     assert call.kwargs["plan_id"] == "budget-1"
     wrapper = call.kwargs["data"]
-    assert wrapper.scheduled_transaction.account_id == "acct-1"
+    assert (
+        str(wrapper.scheduled_transaction.account_id)
+        == "11111111-1111-1111-1111-111111111111"
+    )
     assert wrapper.scheduled_transaction.amount == -50000
     assert wrapper.scheduled_transaction.frequency == "monthly"
 
@@ -69,10 +59,6 @@ def test_create_scheduled_transaction_raises_tool_error_on_api_exception(
     api = mocker.patch(
         "ynab_mcp.tools.scheduled_transactions.ynab.ScheduledTransactionsApi"
     )
-    mocker.patch("ynab_mcp.tools.scheduled_transactions.ynab.SaveScheduledTransaction")
-    mocker.patch(
-        "ynab_mcp.tools.scheduled_transactions.ynab.PostScheduledTransactionWrapper"
-    )
     api.return_value.create_scheduled_transaction.side_effect = ynab.ApiException(
         status=400,
         reason="Bad Request",
@@ -82,7 +68,12 @@ def test_create_scheduled_transaction_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Invalid account_id"):
         create_scheduled_transaction(
-            client, "budget-1", "bad-acct", date(2024, 3, 1), -50000, "monthly"
+            client,
+            "budget-1",
+            "11111111-1111-1111-1111-111111111111",
+            date(2024, 3, 1),
+            -50000,
+            "monthly",
         )
 
 
@@ -92,31 +83,19 @@ def test_update_scheduled_transaction_calls_update(mocker: MockerFixture) -> Non
     api = mocker.patch(
         "ynab_mcp.tools.scheduled_transactions.ynab.ScheduledTransactionsApi"
     )
-    save_st_mock = mocker.patch(
-        "ynab_mcp.tools.scheduled_transactions.ynab.SaveScheduledTransaction"
-    )
-    wrapper_mock = mocker.patch(
-        "ynab_mcp.tools.scheduled_transactions.ynab.PutScheduledTransactionWrapper"
-    )
-
-    # Configure mocks to preserve arguments
-    def save_st_side_effect(**kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(**kwargs)
-
-    save_st_mock.side_effect = save_st_side_effect
-
-    def wrapper_side_effect(**kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(**kwargs)
-
-    wrapper_mock.side_effect = wrapper_side_effect
-
     fake_scheduled = SimpleNamespace(id="st1")
     api.return_value.update_scheduled_transaction.return_value = SimpleNamespace(
         data=SimpleNamespace(scheduled_transaction=fake_scheduled)
     )
 
     result = update_scheduled_transaction(
-        client, "budget-1", "st1", "acct-1", date(2024, 3, 1), -60000, "monthly"
+        client,
+        "budget-1",
+        "st1",
+        "11111111-1111-1111-1111-111111111111",
+        date(2024, 3, 1),
+        -60000,
+        "monthly",
     )
 
     assert result == fake_scheduled
@@ -135,10 +114,6 @@ def test_update_scheduled_transaction_raises_tool_error_on_api_exception(
     api = mocker.patch(
         "ynab_mcp.tools.scheduled_transactions.ynab.ScheduledTransactionsApi"
     )
-    mocker.patch("ynab_mcp.tools.scheduled_transactions.ynab.SaveScheduledTransaction")
-    mocker.patch(
-        "ynab_mcp.tools.scheduled_transactions.ynab.PutScheduledTransactionWrapper"
-    )
     api.return_value.update_scheduled_transaction.side_effect = ynab.ApiException(
         status=404,
         reason="Not Found",
@@ -151,7 +126,7 @@ def test_update_scheduled_transaction_raises_tool_error_on_api_exception(
             client,
             "budget-1",
             "missing-st",
-            "acct-1",
+            "11111111-1111-1111-1111-111111111111",
             date(2024, 3, 1),
             -60000,
             "monthly",
