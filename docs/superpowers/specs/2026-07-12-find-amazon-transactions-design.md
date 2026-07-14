@@ -160,6 +160,13 @@ trivial to construct.
    flag (that lives on `Order`), so the proxy is a case-insensitive `"whole foods"`
    substring check against `Transaction.seller` — cheap, no extra API call, and Whole
    Foods consistently identifies itself as the seller on these charge records.
+   **Correction from live testing (2026-07-14):** also exclude transactions with a
+   falsy `order_number`. `amazon-orders`' `Transaction._parse_order_number()` can
+   legitimately return `""` for transaction shapes it can't parse an order number out
+   of (e.g. some digital/subscription charges); matching against these called
+   `AmazonOrders.get_order("")` and failed with `AmazonOrdersNotFoundError`, and two
+   such transactions would also incorrectly group as a fake split-shipment order
+   (same `""` key in the pass-2 grouping below).
 3. **Join.** For each YNAB candidate, find Amazon candidate(s) whose `amount` **exactly**
    equals the YNAB amount and whose `date` falls within `date_window_days` of the YNAB
    date (inclusive, either direction).

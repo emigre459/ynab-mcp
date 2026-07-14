@@ -1450,8 +1450,12 @@ def find_amazon_transactions(
     filtered_amazon_transactions = [
         t
         for t in raw_amazon_transactions
-        if not t.is_refund and not _is_whole_foods_transaction(t)
+        if not t.is_refund and not _is_whole_foods_transaction(t) and t.order_number
     ]
+    # Correction from live testing (2026-07-14): also excludes t.order_number == "" --
+    # amazon-orders can legitimately parse a blank order number for some transaction
+    # shapes, which broke AmazonOrders.get_order("") and could fake-group unrelated
+    # transactions into a split-shipment order. See tests/test_tools_find_amazon_transactions.py::test_find_amazon_transactions_excludes_blank_order_numbers.
     amazon_by_ref = {
         f"{t.order_number}:{i}": t for i, t in enumerate(filtered_amazon_transactions)
     }
