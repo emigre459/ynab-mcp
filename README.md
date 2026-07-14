@@ -14,6 +14,12 @@ Python backend managed with `uv`. Run `make deps` then `make pr_check`.
 3. To use this server from Claude Code, copy `.mcp.json.example` to
    `.mcp.json` and set the `--directory` arg to this repo's absolute path
    on your machine (`.mcp.json` is gitignored — it's machine-specific).
+4. Optionally set `AMAZON_USERNAME`/`AMAZON_PASSWORD` (and
+   `AMAZON_OTP_SECRET_KEY` if your account uses OTP-based 2FA) to enable
+   the `find-amazon-transactions` tool. Then run `uv run playwright install
+   chromium` once (handles Amazon's JavaScript-based login challenges) and
+   `uv run python scripts/amazon_login.py` to establish a session — see
+   that script's docstring for details.
 
 ## Running
 
@@ -31,7 +37,7 @@ npx @modelcontextprotocol/inspector uv run ynab-mcp
 ```
 
 In the Inspector UI: click **Connect**, then **List Tools** — you should
-see all 7 tools listed in [Tools](#tools) below (or 6, with `list-budgets`
+see all 10 tools listed in [Tools](#tools) below (or 9, with `list-budgets`
 hidden, if you set `YNAB_DEFAULT_BUDGET_ID`). Run `list-budgets` (or
 `list-accounts` with a `budget_id`) and confirm it returns your real YNAB
 data, not an error.
@@ -49,5 +55,44 @@ Read-only tools, backed by the official `ynab` PyPI client:
 - `get-month-info` — budget totals and category detail for a month.
 - `lookup-entity-by-id` — fetch a single account/category/payee/
   transaction/month by id.
+- `find-payee-transactions` — search payees by name (exact/substring/fuzzy)
+  and summarize each match's transaction patterns (typical amount,
+  category, recurring-charge guess).
+- `flag-category-spend` — flag categories over/under budget by more than a
+  configurable `threshold` (default 10%) for a single month.
+- `analyze-category-trends` — walk a trailing window of months
+  (`months`, default 6) per category and flag a rising budget that's still
+  overspent (`rising_overspend`) or a category persistently underspent
+  (`persistent_underspend`), using a majority-of-months rule so one
+  anomalous month doesn't trigger a false flag.
+
+Registered only when Amazon credentials are configured:
+
+- `find-amazon-transactions` — matches YNAB transactions against real
+  Amazon order/transaction history and proposes categorizations with
+  confidence/reasoning. Read-only — never writes a categorization back to
+  YNAB.
 
 Write/mutation tools are out of scope for this server (a follow-up card).
+
+### Testing the spend-analysis tools against real data
+
+`flag-category-spend` and `analyze-category-trends` are only meaningfully
+verified against a real budget's spending history — unit tests cover the
+logic, but not whether it matches what you actually know about your
+budget. Via MCP Inspector (or any MCP client pointed at `uv run ynab-mcp`):
+
+1. Call `flag-category-spend` with `month="current"` (or a past month you
+   remember overspending in). Confirm the flagged categories and their
+   `reason` text match what you know actually happened that month.
+2. Call it again with a much higher `threshold` (e.g. `0.99`) and confirm
+   fewer/no categories are flagged — sanity-checks the threshold is
+   actually applied.
+3. Call `analyze-category-trends` with defaults. Confirm any category you
+   know has had its budget repeatedly raised while still running over
+   shows up as `rising_overspend`, and any category you know sits mostly
+   unused shows up as `persistent_underspend`.
+4. A category with a genuine one-off anomalous month (e.g. a single large
+   purchase) should NOT appear in `analyze-category-trends`'s output
+   unless it's a recurring pattern — that's the majority-of-months rule
+   working as intended.
