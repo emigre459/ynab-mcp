@@ -10,33 +10,41 @@ from pytest_mock import MockerFixture
 from ynab_mcp.tools.transactions_write import bulk_manage_transactions
 
 
-def test_bulk_manage_transactions_requires_at_least_one_operation() -> None:
+def test_bulk_manage_transactions_requires_at_least_one_operation(
+    mocker: MockerFixture,
+) -> None:
     """An empty operations list is a caller error, not a YNAB call."""
-    client = SimpleNamespace()
+    client = mocker.Mock()
 
     with raises(ToolError, match="at least one operation"):
         bulk_manage_transactions(client, "budget-1", [])
 
 
-def test_bulk_manage_transactions_rejects_unknown_action() -> None:
+def test_bulk_manage_transactions_rejects_unknown_action(
+    mocker: MockerFixture,
+) -> None:
     """An operation with an invalid action raises before any API call."""
-    client = SimpleNamespace()
+    client = mocker.Mock()
 
     with raises(ToolError, match="action must be one of"):
         bulk_manage_transactions(client, "budget-1", [{"action": "archive"}])
 
 
-def test_bulk_manage_transactions_rejects_update_without_id() -> None:
+def test_bulk_manage_transactions_rejects_update_without_id(
+    mocker: MockerFixture,
+) -> None:
     """An update operation missing 'id' raises before any API call."""
-    client = SimpleNamespace()
+    client = mocker.Mock()
 
     with raises(ToolError, match="update requires 'id'"):
         bulk_manage_transactions(client, "budget-1", [{"action": "update"}])
 
 
-def test_bulk_manage_transactions_rejects_create_without_account_id() -> None:
+def test_bulk_manage_transactions_rejects_create_without_account_id(
+    mocker: MockerFixture,
+) -> None:
     """A create operation missing 'account_id' raises before any API call."""
-    client = SimpleNamespace()
+    client = mocker.Mock()
 
     with raises(ToolError, match="create requires 'account_id'"):
         bulk_manage_transactions(client, "budget-1", [{"action": "create"}])
@@ -173,3 +181,41 @@ def test_bulk_manage_transactions_marks_whole_create_group_error_on_batch_failur
 
     assert all(item["status"] == "error" for item in result)
     assert all(item["detail"] == "Invalid account_id" for item in result)
+
+
+def test_bulk_manage_transactions_reports_error_when_response_shorter_than_request(
+    mocker: MockerFixture,
+) -> None:
+    """A create response with fewer transactions than submitted marks the gap as an error."""
+    client = mocker.Mock()
+    transactions_api = mocker.patch(
+        "ynab_mcp.tools.transactions_write.ynab.TransactionsApi"
+    )
+    transactions_api.return_value.create_transaction.return_value = SimpleNamespace(
+        data=SimpleNamespace(transactions=[SimpleNamespace(id="new-1")])
+    )
+
+    operations: list[dict[str, object]] = [
+        {
+            "action": "create",
+            "account_id": "11111111-1111-1111-1111-111111111111",
+            "amount": -1000,
+        },
+        {
+            "action": "create",
+            "account_id": "11111111-1111-1111-1111-111111111111",
+            "amount": -2000,
+        },
+    ]
+
+    result = bulk_manage_transactions(client, "budget-1", operations)
+
+    assert result[0] == {
+        "action": "create",
+        "id": "new-1",
+        "status": "ok",
+        "detail": None,
+    }
+    assert result[1]["status"] == "error"
+    assert result[1]["id"] is None
+    assert "did not include a result" in str(result[1]["detail"])

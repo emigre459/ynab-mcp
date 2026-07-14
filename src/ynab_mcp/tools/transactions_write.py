@@ -135,6 +135,17 @@ def bulk_manage_transactions(
                     "status": "ok",
                     "detail": None,
                 }
+            for i in create_indices:
+                if i not in results:
+                    results[i] = {
+                        "action": "create",
+                        "id": None,
+                        "status": "error",
+                        "detail": (
+                            "YNAB's response did not include a result for "
+                            "this create operation."
+                        ),
+                    }
         except ynab.ApiException as exc:
             detail = str(translate_api_exception(exc))
             for i in create_indices:
@@ -165,6 +176,17 @@ def bulk_manage_transactions(
                     "status": "ok",
                     "detail": None,
                 }
+            for i in update_indices:
+                if i not in results:
+                    results[i] = {
+                        "action": "update",
+                        "id": str(operations[i]["id"]),
+                        "status": "error",
+                        "detail": (
+                            "YNAB's response did not include a result for "
+                            "this update operation."
+                        ),
+                    }
         except ynab.ApiException as exc:
             detail = str(translate_api_exception(exc))
             for i in update_indices:
