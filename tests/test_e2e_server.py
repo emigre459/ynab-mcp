@@ -39,4 +39,6 @@ def test_uv_run_ynab_mcp_stdio_server_lists_expected_tools() -> None:
         "get-month-info",
         "list-payees",
         "lookup-entity-by-id",
+        "flag-category-spend",
+        "analyze-category-trends",
     }

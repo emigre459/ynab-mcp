@@ -293,7 +293,7 @@ def analyze_category_trends(
         _fetch_month_categories(client, budget_id, m) for m in window_months
     ]
     month_maps = [{c.id: c for c in cats} for cats in monthly_categories]
-    all_category_ids = {c.id: c.name for cats in monthly_categories for c in cats}
+    all_category_ids = {c.id for cats in monthly_categories for c in cats}
 
     results: list[dict[str, object]] = []
     for category_id in all_category_ids:
