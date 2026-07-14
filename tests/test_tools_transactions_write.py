@@ -219,3 +219,33 @@ def test_bulk_manage_transactions_reports_error_when_response_shorter_than_reque
     assert result[1]["status"] == "error"
     assert result[1]["id"] is None
     assert "did not include a result" in str(result[1]["detail"])
+
+
+def test_bulk_manage_transactions_reports_error_for_invalid_uuid_field(
+    mocker: MockerFixture,
+) -> None:
+    """A malformed UUID field is reported as a per-item error, not raised."""
+    client = mocker.Mock()
+    transactions_api = mocker.patch(
+        "ynab_mcp.tools.transactions_write.ynab.TransactionsApi"
+    )
+    transactions_api.return_value.delete_transaction.return_value = SimpleNamespace(
+        data=SimpleNamespace(transaction=SimpleNamespace(id="txn-1"))
+    )
+
+    operations: list[dict[str, object]] = [
+        {"action": "create", "account_id": "not-a-valid-uuid", "amount": -1000},
+        {"action": "delete", "id": "txn-1"},
+    ]
+
+    result = bulk_manage_transactions(client, "budget-1", operations)
+
+    assert result[0]["status"] == "error"
+    assert "Invalid transaction field" in str(result[0]["detail"])
+    assert result[1] == {
+        "action": "delete",
+        "id": "txn-1",
+        "status": "ok",
+        "detail": None,
+    }
+    transactions_api.return_value.create_transaction.assert_not_called()

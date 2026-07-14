@@ -2,6 +2,7 @@
 
 from typing import Literal, TypedDict
 
+import pydantic
 import ynab
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -155,6 +156,15 @@ def bulk_manage_transactions(
                     "status": "error",
                     "detail": detail,
                 }
+        except pydantic.ValidationError as exc:
+            detail = f"Invalid transaction field(s) in this batch: {exc}"
+            for i in create_indices:
+                results[i] = {
+                    "action": "create",
+                    "id": None,
+                    "status": "error",
+                    "detail": detail,
+                }
 
     update_indices = [i for i, op in enumerate(operations) if op["action"] == "update"]
     if update_indices:
@@ -189,6 +199,15 @@ def bulk_manage_transactions(
                     }
         except ynab.ApiException as exc:
             detail = str(translate_api_exception(exc))
+            for i in update_indices:
+                results[i] = {
+                    "action": "update",
+                    "id": str(operations[i]["id"]),
+                    "status": "error",
+                    "detail": detail,
+                }
+        except pydantic.ValidationError as exc:
+            detail = f"Invalid transaction field(s) in this batch: {exc}"
             for i in update_indices:
                 results[i] = {
                     "action": "update",
