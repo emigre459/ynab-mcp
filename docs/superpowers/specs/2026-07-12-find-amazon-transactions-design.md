@@ -160,13 +160,19 @@ trivial to construct.
    flag (that lives on `Order`), so the proxy is a case-insensitive `"whole foods"`
    substring check against `Transaction.seller` — cheap, no extra API call, and Whole
    Foods consistently identifies itself as the seller on these charge records.
-   **Correction from live testing (2026-07-14):** also exclude transactions with a
-   falsy `order_number`. `amazon-orders`' `Transaction._parse_order_number()` can
-   legitimately return `""` for transaction shapes it can't parse an order number out
-   of (e.g. some digital/subscription charges); matching against these called
-   `AmazonOrders.get_order("")` and failed with `AmazonOrdersNotFoundError`, and two
-   such transactions would also incorrectly group as a fake split-shipment order
-   (same `""` key in the pass-2 grouping below).
+   **Correction from live testing (2026-07-14):** `Transaction.order_number` can
+   legitimately be `""` for some transaction shapes `amazon-orders` can't parse an
+   order number out of (confirmed live against a real digital/subscription-style
+   charge, whose `seller` field held a document id rather than a seller name). These
+   are still real, matchable charges. First attempt: exclude them from matching
+   entirely, since `AmazonOrders.get_order("")` fails and two such transactions would
+   fake-group as one split-shipment order (same `""` key). This proved too broad — it
+   silently dropped genuinely matchable transactions into `unmatched`. Corrected
+   behavior: still build an `AmazonCandidate` for them, but with a synthetic unique
+   `order_number` (the candidate's own `transaction_ref`) so they never fake-group;
+   the tool function looks up each match's *real* (possibly blank) order number
+   separately for display, and skips the `get_order()` enrichment call when it's
+   blank rather than skipping the match itself.
 3. **Join.** For each YNAB candidate, find Amazon candidate(s) whose `amount` **exactly**
    equals the YNAB amount and whose `date` falls within `date_window_days` of the YNAB
    date (inclusive, either direction).
