@@ -1,5 +1,8 @@
 """FastMCP stdio server exposing read-only YNAB data."""
 
+import sys
+
+from amazonorders.exception import AmazonOrdersError
 from fastmcp import FastMCP
 
 from ynab_mcp.amazon_client import (
@@ -28,7 +31,13 @@ def build_server() -> FastMCP:
     client, and registers every read-only tool. ``list-budgets`` is
     registered only when no default budget is configured.
     ``find-amazon-transactions`` is registered only when Amazon credentials
-    (``AMAZON_USERNAME``/``AMAZON_PASSWORD``) are configured.
+    (``AMAZON_USERNAME``/``AMAZON_PASSWORD``) are configured *and* a session
+    can be established: ``AmazonSession.login()`` is called once here, at
+    startup -- if a valid session was already persisted by
+    ``scripts/amazon_login.py``, this is fast (a single cookie-validity
+    check, no interactive challenge); if the session is missing or expired,
+    it fails and the tool is skipped for this run rather than registered in
+    a broken state.
 
     Returns
     -------
@@ -56,11 +65,21 @@ def build_server() -> FastMCP:
     amazon_settings = AmazonSettings.from_env()
     if amazon_settings is not None:
         amazon_session = build_amazon_session(amazon_settings)
-        amazon_orders_client = build_amazon_orders(amazon_session)
-        amazon_transactions_client = build_amazon_transactions(amazon_session)
-        find_amazon_transactions.register(
-            mcp, client, amazon_transactions_client, amazon_orders_client, settings
-        )
+        try:
+            amazon_session.login()
+        except AmazonOrdersError as exc:
+            print(
+                f"Amazon session unavailable, find-amazon-transactions will not be "
+                f"registered this run: {exc} Run "
+                "`uv run python scripts/amazon_login.py` to re-establish it.",
+                file=sys.stderr,
+            )
+        else:
+            amazon_orders_client = build_amazon_orders(amazon_session)
+            amazon_transactions_client = build_amazon_transactions(amazon_session)
+            find_amazon_transactions.register(
+                mcp, client, amazon_transactions_client, amazon_orders_client, settings
+            )
 
     return mcp
 

@@ -60,30 +60,13 @@ def test_uv_run_ynab_mcp_stdio_server_lists_expected_tools() -> None:
     }
 
 
-@pytest.mark.e2e
-def test_uv_run_ynab_mcp_stdio_server_registers_find_amazon_transactions_when_configured() -> (
-    None
-):
-    """The real stdio subprocess registers find-amazon-transactions too.
-
-    Uses dummy Amazon credentials: AmazonSession's constructor makes no
-    network calls (only .login(), which this server deliberately never
-    calls), so listing tools stays safe with no live credentials or an
-    established session. This exercises the real import graph and
-    conditional-registration wiring through the actual subprocess, which
-    the mocked unit tests in test_server.py cannot catch.
-    """
-    transport = StdioTransport(
-        command="uv",
-        args=["run", "ynab-mcp"],
-        env={
-            "YNAB_PAT": "e2e-dummy-token",
-            "YNAB_DEFAULT_BUDGET_ID": "",
-            "AMAZON_USERNAME": "e2e-dummy-user",
-            "AMAZON_PASSWORD": "e2e-dummy-password",
-        },
-    )
-
-    tool_names = asyncio.run(_list_tool_names(transport))
-
-    assert "find-amazon-transactions" in tool_names
+# No E2E test exercises the "Amazon configured" registration path with dummy
+# credentials: server.py calls the real AmazonSession.login() at startup for
+# that path, and amazon-orders persists its cookie jar to a single fixed
+# global path (~/.config/amazonorders/cookies.json, no env override) shared
+# by every process on the machine -- including a developer's real, already
+# -established session. Dummy credentials on a machine with a valid real
+# session would silently "succeed" via the leftover real cookies regardless
+# of the (wrong) credentials passed, making such a test non-deterministic.
+# The login()-success and login()-failure registration paths are instead
+# covered deterministically by the fully-mocked tests in test_server.py.

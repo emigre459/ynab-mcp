@@ -22,12 +22,19 @@ _BROWSER_AUTH_FORMS_CLASSES = [
 def build_amazon_session(settings: AmazonSettings) -> AmazonSession:
     """Construct an ``AmazonSession`` from Amazon settings.
 
-    Deliberately never calls ``.login()`` -- an MCP stdio tool call has no
-    way to handle an interactive CAPTCHA/OTP challenge mid-request. The
-    session loads any existing persisted cookies automatically; the first
-    login must happen out of band via ``scripts/amazon_login.py``, which
-    runs interactively and can drive a real (headless) browser through any
-    JavaScript-based challenge Amazon presents.
+    This function itself never calls ``.login()`` -- the caller (``server.py``)
+    does that exactly once, right after construction, at server startup.
+    That single call is what actually flips ``AmazonSession.is_authenticated``
+    to ``True``; the ``amazon-orders`` library requires this even when a
+    valid session was already persisted to disk (loading cookies at
+    construction time is not, by itself, enough for ``AmazonOrders``/
+    ``AmazonTransactions`` calls to proceed). Calling ``.login()`` is safe at
+    startup because it fast-paths (a single request, no interactive
+    challenge) when the persisted cookies are still valid; a genuinely
+    missing/expired session must be re-established out of band via
+    ``scripts/amazon_login.py``, which can drive a real (headless) browser
+    through any JavaScript-based challenge Amazon presents -- something no
+    MCP stdio tool call could do mid-request.
 
     Parameters
     ----------
@@ -37,7 +44,7 @@ def build_amazon_session(settings: AmazonSettings) -> AmazonSession:
     Returns
     -------
     amazonorders.session.AmazonSession
-        A session that will reuse a previously persisted login, if any.
+        A session ready for the caller to call ``.login()`` on.
     """
     config = AmazonOrdersConfig(
         data={
