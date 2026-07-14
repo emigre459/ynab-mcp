@@ -205,9 +205,18 @@ def find_amazon_transactions_tool(
     since_date: date | None = None,
     until_date: date | None = None,
     date_window_days: int = 3,
+    include_approved: bool = False,
 ) -> dict[str, object]:
     ...
 ```
+
+**Addition from live testing (2026-07-14):** `include_approved` was added after live testing
+raised a product question: YNAB's `approved` field means a human confirmed the imported bank
+transaction happened -- it says nothing about whether the assigned category is correct, or
+whether anyone cross-referenced it against the actual Amazon order. The user's workflow
+treats approval as "already handled, don't resurface," so already-approved YNAB transactions
+are excluded from `amazon_like_txns` entirely (not matches, not ambiguous, not unmatched)
+unless `include_approved=True` is passed.
 
 Mirrors `list-transactions`' `budget_id`/`since_date`/`until_date` defaulting via
 `resolve_budget_id`. Internally: calls `list_transactions()` (reused from
