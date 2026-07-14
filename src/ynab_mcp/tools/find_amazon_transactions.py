@@ -70,18 +70,20 @@ def _build_reasoning(
     """Build a human-readable reasoning string for a match."""
     item_titles = ", ".join(item.title for item in order.items[:3]) if order else ""
     suffix = f" ({item_titles})" if item_titles else ""
+    order_desc = (
+        f"Amazon order #{order_number}"
+        if order_number
+        else "an Amazon charge with no parseable order number"
+    )
     if classification == "exact":
-        return f"Exact amount+date match against Amazon order #{order_number}{suffix}."
+        return f"Exact amount+date match against {order_desc}{suffix}."
     if classification == "near-date":
         return (
-            f"Amount match against Amazon order #{order_number} within "
+            f"Amount match against {order_desc} within "
             f"{date_window_days} days{suffix}."
         )
     same_day_desc = "same-day" if same_day else "on a nearby date"
-    return (
-        f"One leg of a split-shipment Amazon order #{order_number}, "
-        f"charged {same_day_desc}{suffix}."
-    )
+    return f"One leg of a split-shipment {order_desc}, charged {same_day_desc}{suffix}."
 
 
 def _serialize_amazon_transaction(transaction: Transaction) -> dict[str, object]:
@@ -170,23 +172,27 @@ def find_amazon_transactions(
     except AmazonOrdersError as exc:
         raise translate_amazon_exception(exc) from exc
 
-    # t.order_number can legitimately be "" for some transaction shapes the
-    # library can't parse an order number out of (e.g. some digital/
-    # subscription charges). Matching against these would call
-    # AmazonOrders.get_order("") and fail; two such transactions would also
-    # incorrectly group as a fake split-shipment order (same "" key).
     filtered_amazon_transactions = [
         t
         for t in raw_amazon_transactions
-        if not t.is_refund and not _is_whole_foods_transaction(t) and t.order_number
+        if not t.is_refund and not _is_whole_foods_transaction(t)
     ]
     amazon_by_ref = {
         f"{t.order_number}:{i}": t for i, t in enumerate(filtered_amazon_transactions)
     }
+    # t.order_number can legitimately be "" for some transaction shapes the
+    # library can't parse an order number out of (confirmed via live testing
+    # against a real Audible charge). These are still real, matchable
+    # charges -- but grouping AmazonCandidate.order_number on a shared ""
+    # would incorrectly treat unrelated blank-order-number transactions as
+    # legs of one split-shipment order, so each gets its own unique
+    # synthetic key (its already-unique transaction_ref) instead. The
+    # matches_out loop below looks up the *real* order_number (possibly
+    # blank) from amazon_by_ref for display/enrichment, never this key.
     amazon_candidates = [
         AmazonCandidate(
             transaction_ref=ref,
-            order_number=t.order_number,
+            order_number=t.order_number or ref,
             amount=_amount_to_milliunits(t.grand_total),
             txn_date=t.completed_date,
         )
@@ -209,7 +215,8 @@ def find_amazon_transactions(
 
     matches_out: list[dict[str, object]] = []
     for match in result.matches:
-        order = _order_for(match.order_number)
+        real_order_number = amazon_by_ref[match.amazon_transaction_ref].order_number
+        order = _order_for(real_order_number) if real_order_number else None
         matches_out.append(
             {
                 "ynab_transaction": ynab_by_id[match.ynab_transaction_id].model_dump(
@@ -218,11 +225,11 @@ def find_amazon_transactions(
                 "amazon_transaction": _serialize_amazon_transaction(
                     amazon_by_ref[match.amazon_transaction_ref]
                 ),
-                "order_number": match.order_number,
+                "order_number": real_order_number,
                 "classification": match.classification,
                 "reasoning": _build_reasoning(
                     match.classification,
-                    match.order_number,
+                    real_order_number,
                     order,
                     date_window_days,
                     match.same_day,

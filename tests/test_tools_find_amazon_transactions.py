@@ -174,18 +174,56 @@ def test_find_amazon_transactions_surfaces_ambiguous_candidates(
     assert order_numbers == {"333-1111111", "333-2222222"}
 
 
-def test_find_amazon_transactions_excludes_blank_order_numbers(
+def test_find_amazon_transactions_matches_blank_order_numbers_without_enrichment(
     mocker: MockerFixture,
 ) -> None:
-    """Amazon transactions with no parseable order number are excluded.
+    """Amazon transactions with no parseable order number still match.
 
     amazon-orders' Transaction._parse_order_number() can legitimately
     return "" for certain transaction shapes (e.g. some digital/
-    subscription charges) that don't match its expected order-number
-    pattern. Matching against these would call AmazonOrders.get_order("")
-    and fail with an AmazonOrdersNotFoundError; worse, two unrelated blank-
-    order-number transactions would incorrectly group as a fake
-    split-shipment order (same "" key). Both must never happen.
+    subscription charges, confirmed via live testing against a real
+    Audible charge). These must still be matchable -- an unparseable
+    order number doesn't mean the charge isn't real -- but calling
+    AmazonOrders.get_order("") would fail, so enrichment is skipped
+    (reasoning has no item-detail suffix) and the output order_number is
+    the blank string as-is.
+    """
+    ynab_client = mocker.Mock()
+    list_transactions = mocker.patch(
+        "ynab_mcp.tools.find_amazon_transactions.list_transactions"
+    )
+    list_transactions.return_value = [
+        _ynab_txn(mocker, "y1", -5000, date(2026, 6, 1), "Amazon.com"),
+    ]
+    amazon_transactions_client = mocker.Mock()
+    amazon_transactions_client.get_transactions.return_value = [
+        _amazon_txn("", -5.00, date(2026, 6, 1)),
+    ]
+    amazon_orders_client = mocker.Mock()
+
+    result = find_amazon_transactions(
+        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+    )
+
+    assert len(result["matches"]) == 1  # type: ignore[arg-type]
+    match = result["matches"][0]  # type: ignore[index]
+    assert match["order_number"] == ""
+    assert match["classification"] == "exact"
+    assert match["split_group"] == []
+    assert "order #" not in match["reasoning"]
+    assert result["ambiguous"] == []
+    assert result["unmatched"] == []
+    amazon_orders_client.get_order.assert_not_called()
+
+
+def test_find_amazon_transactions_does_not_fake_group_blank_order_numbers(
+    mocker: MockerFixture,
+) -> None:
+    """Two unrelated blank-order-number matches never group as split-shipment.
+
+    Both share the same (blank) real order_number, but they must not be
+    treated as legs of one split-shipment order -- there is no evidence
+    they're actually related.
     """
     ynab_client = mocker.Mock()
     list_transactions = mocker.patch(
@@ -206,10 +244,10 @@ def test_find_amazon_transactions_excludes_blank_order_numbers(
         ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
     )
 
-    assert result["matches"] == []
-    assert result["ambiguous"] == []
-    unmatched_ids = {u["ynab_transaction"]["id"] for u in result["unmatched"]}  # type: ignore[attr-defined]
-    assert unmatched_ids == {"y1", "y2"}
+    assert len(result["matches"]) == 2  # type: ignore[arg-type]
+    for match in result["matches"]:  # type: ignore[attr-defined]
+        assert match["classification"] != "split-shipment"
+        assert match["split_group"] == []
     amazon_orders_client.get_order.assert_not_called()
 
 
