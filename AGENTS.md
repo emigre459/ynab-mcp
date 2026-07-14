@@ -74,9 +74,20 @@ tools:
 - `tools/` — one module per tool group, each with a plain testable function
   plus a thin `@mcp.tool`-registering `register(mcp, client, settings)`
   function (budgets.py's `register` omits `settings` — no default-budget
-  concept applies to listing all budgets). `find_amazon_transactions.py`
-  additionally takes the Amazon clients and reuses `tools/transactions.py`'s
-  `list_transactions()` rather than re-implementing YNAB fetching.
+  concept applies to listing all budgets). A tool module may import and call
+  another tool module's plain function directly to reuse existing
+  API-calling logic instead of duplicating YNAB SDK calls (`lookup.py`
+  imports `parse_month` from `months.py`; `payee_patterns.py` imports
+  `list_payees`/`list_transactions` from `payees.py`/`transactions.py` to
+  build `find-payee-transactions`, a read-and-aggregate tool with no new
+  YNAB API surface of its own; `spend_analysis.py` imports `parse_month`
+  from `months.py` and wraps `MonthsApi.get_plan_month` directly to build
+  `flag-category-spend` and `analyze-category-trends` — two tools sharing
+  one module since both are pure derived-analysis over the same per-month
+  category data, with no new API surface beyond what `months.py` already
+  calls; `find_amazon_transactions.py` additionally takes the Amazon
+  clients and reuses `transactions.py`'s `list_transactions()` rather than
+  re-implementing YNAB fetching).
 - `server.py` — `build_server()` wires it all together; `list-budgets` is
   registered only when no default budget is configured.
   `find-amazon-transactions` is registered only when `AmazonSettings.from_env()`

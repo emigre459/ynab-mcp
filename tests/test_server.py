@@ -87,6 +87,9 @@ def test_build_server_registers_all_other_tools(
         "get-month-info",
         "list-payees",
         "lookup-entity-by-id",
+        "find-payee-transactions",
+        "flag-category-spend",
+        "analyze-category-trends",
     }
 
 
