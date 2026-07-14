@@ -168,6 +168,45 @@ def test_find_amazon_transactions_surfaces_ambiguous_candidates(
     assert order_numbers == {"333-1111111", "333-2222222"}
 
 
+def test_find_amazon_transactions_excludes_blank_order_numbers(
+    mocker: MockerFixture,
+) -> None:
+    """Amazon transactions with no parseable order number are excluded.
+
+    amazon-orders' Transaction._parse_order_number() can legitimately
+    return "" for certain transaction shapes (e.g. some digital/
+    subscription charges) that don't match its expected order-number
+    pattern. Matching against these would call AmazonOrders.get_order("")
+    and fail with an AmazonOrdersNotFoundError; worse, two unrelated blank-
+    order-number transactions would incorrectly group as a fake
+    split-shipment order (same "" key). Both must never happen.
+    """
+    ynab_client = mocker.Mock()
+    list_transactions = mocker.patch(
+        "ynab_mcp.tools.find_amazon_transactions.list_transactions"
+    )
+    list_transactions.return_value = [
+        _ynab_txn(mocker, "y1", -5000, date(2026, 6, 1), "Amazon.com"),
+        _ynab_txn(mocker, "y2", -7500, date(2026, 6, 2), "Amazon.com"),
+    ]
+    amazon_transactions_client = mocker.Mock()
+    amazon_transactions_client.get_transactions.return_value = [
+        _amazon_txn("", -5.00, date(2026, 6, 1)),
+        _amazon_txn("", -7.50, date(2026, 6, 2)),
+    ]
+    amazon_orders_client = mocker.Mock()
+
+    result = find_amazon_transactions(
+        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+    )
+
+    assert result["matches"] == []
+    assert result["ambiguous"] == []
+    unmatched_ids = {u["ynab_transaction"]["id"] for u in result["unmatched"]}  # type: ignore[attr-defined]
+    assert unmatched_ids == {"y1", "y2"}
+    amazon_orders_client.get_order.assert_not_called()
+
+
 def test_find_amazon_transactions_translates_auth_error(mocker: MockerFixture) -> None:
     """An expired Amazon session surfaces as a ToolError with remediation."""
     ynab_client = mocker.Mock()

@@ -159,10 +159,15 @@ def find_amazon_transactions(
     except AmazonOrdersError as exc:
         raise translate_amazon_exception(exc) from exc
 
+    # t.order_number can legitimately be "" for some transaction shapes the
+    # library can't parse an order number out of (e.g. some digital/
+    # subscription charges). Matching against these would call
+    # AmazonOrders.get_order("") and fail; two such transactions would also
+    # incorrectly group as a fake split-shipment order (same "" key).
     filtered_amazon_transactions = [
         t
         for t in raw_amazon_transactions
-        if not t.is_refund and not _is_whole_foods_transaction(t)
+        if not t.is_refund and not _is_whole_foods_transaction(t) and t.order_number
     ]
     amazon_by_ref = {
         f"{t.order_number}:{i}": t for i, t in enumerate(filtered_amazon_transactions)
