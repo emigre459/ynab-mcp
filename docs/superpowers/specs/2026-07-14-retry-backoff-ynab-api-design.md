@@ -97,6 +97,46 @@ return summaries
 
 This drops the call count from `1 + N_matches` to a flat `2` (or `1` when there are zero matches — the unfiltered fetch is skipped entirely since there's nothing to look up), regardless of how many payees a fuzzy query matches. Output shape (`list[PayeeGroupSummary]`, one per matched payee with ≥1 transaction) is unchanged.
 
+**Volume tradeoff:** both `get_transactions` (unfiltered) and `get_transactions_by_payee` default `since_date` to one year ago at the YNAB API level when unspecified — so the *time window* fetched is unchanged from today's per-payee behavior, not "all-time." But the batched call now returns the **whole budget's** year of activity in one response instead of just the matched payee's slice, which is a materially larger single payload for an account with heavy transaction volume (fewer requests, more data per request — the inherent tradeoff of batching). To give an explicit lever over this, `find_payee_transactions` gains optional `since_date`/`until_date` parameters (same names/semantics `list_transactions` already exposes), passed straight through to the single batched call:
+
+```python
+def find_payee_transactions(
+    client: ynab.ApiClient,
+    budget_id: str,
+    payee_query: str,
+    fuzzy_threshold: float = 0.6,
+    since_date: date | None = None,
+    until_date: date | None = None,
+) -> list[PayeeGroupSummary]:
+    ...
+    all_transactions = list_transactions(
+        client, budget_id, since_date=since_date, until_date=until_date
+    )
+```
+
+Both default to `None` (YNAB's own 1-year default applies), and both are exposed on the `find-payee-transactions` MCP tool the same way `list-transactions` already exposes them — so a caller with an unusually large budget can narrow the window explicitly (e.g. `since_date="2026-01-01"`), trading recall for a smaller response.
+
+## Rate-limit error enrichment (`errors.py`)
+
+YNAB's actual 429 response body is minimal: `{"error": {"id": "429", "name": "too_many_requests", "detail": "Too many requests"}}` — `_extract_detail` would surface only the four words `"Too many requests"` today, which isn't enough for the calling agent to explain what happened or judge whether/when to retry. Once `call_with_retry`'s attempts are exhausted on a 429, `translate_api_exception` appends actionable context rather than relying on the raw detail alone:
+
+```python
+def translate_api_exception(exc: ynab.ApiException) -> ToolError:
+    detail = _extract_detail(exc)
+    logger.error("YNAB API request failed (status=%s): %s", exc.status, detail)
+    if exc.status == 429:
+        return ToolError(
+            f"{detail} — YNAB rate limit exceeded (this access token allows 200 "
+            "requests per rolling hour, and survived automatic retries already). "
+            "The API does not report an exact reset time; the quota clears "
+            "roughly one hour after the earliest request in the current window. "
+            "Wait before retrying, or let the user know to try again in about an hour."
+        )
+    return ToolError(detail)
+```
+
+This keeps the real YNAB detail (satisfying the acceptance criterion) while giving the calling agent enough to produce a useful user-facing message and a concrete retry-timing estimate. **Explicitly out of scope:** the MCP server itself does not schedule a background retry job — a stdio tool call is synchronous request/response with no persistent scheduler or async push to the client, so any actual "wait and retry later" behavior is the calling agent/orchestrator's responsibility, informed by this message.
+
 ## Dependency
 
 `tenacity` is a new runtime dependency (`uv add tenacity`), not currently in `pyproject.toml`.
@@ -112,14 +152,22 @@ This drops the call count from `1 + N_matches` to a flat `2` (or `1` when there 
 
 **Each of the 8 directly-edited modules' existing test files** — one new wiring test per module confirming `call_with_retry` is actually invoked at that call site: a mocked transient failure followed by success still returns the correct data through the tool's plain function.
 
-**`tests/test_tools_payee_patterns.py`** — two new cases for the N+1 fix:
+**`tests/test_tools_payee_patterns.py`** — new cases for the N+1 fix:
 
 - Multiple matched payees → the mocked `list_transactions` is called exactly once (no `payee_id` filter), not once per match.
 - Zero matched payees → the mocked `list_transactions` is never called.
+- `since_date`/`until_date` passed to `find_payee_transactions` are forwarded to the single `list_transactions` call.
+
+**`tests/test_errors.py`** — new case: a 429 `ApiException` produces a `ToolError` whose message includes both the raw YNAB detail and the rate-limit/retry-timing context; a non-429 `ApiException` (e.g. 404 or 500) is unaffected (message is exactly `_extract_detail`'s output, no enrichment appended).
+
+## Blocked on #12 — do not finalize the implementation plan yet
+
+**Issue #12 (Transaction & budget write tools) is being actively finished right now** (branch `12-write-tools`, 17 commits ahead of `main` as of this design, no PR open yet). Per explicit user decision, **this build pauses here** rather than proceeding to `writing-plans` — the same amendment pattern that already happened twice this session for #13/#15 (issue #17 gained new named modules mid-brainstorming when those merged) would very likely repeat for #12, since its four new write tools (`bulk-manage-transactions`, `manage-budgeted-amount`, `manage-payees`, `manage-scheduled-transaction`) will call the YNAB SDK directly and share the exact same rate-limit exposure this issue exists to fix.
+
+**Resume trigger:** once `#12` merges to `main`, rebase this branch, re-audit `#12`'s new modules for their SDK call-site shape (same inspection done above for `spend_analysis.py`/`find_amazon_transactions.py`), fold them into the "Module coverage" section above, and re-run the spec self-review before moving to `writing-plans`. Do not skip straight to planning without this re-audit — a module added without inspection could have a call shape (e.g. a bulk/batch write endpoint) that doesn't fit the simple one-line `call_with_retry` wrap and needs its own judgment call, the same way `spend_analysis.py`'s lack of a bulk-months endpoint did.
 
 ## Out of scope (deferred, flagged to the user)
 
-- Issue #12 (Transaction & budget write tools) is still in-flight (not yet merged) and will introduce new tool modules (`bulk-manage-transactions`, `manage-budgeted-amount`, `manage-payees`, `manage-scheduled-transaction`) that call the YNAB SDK directly. Those modules don't exist on `main` yet and can't be touched from this branch. Once #12 merges, its author needs to apply the same `call_with_retry` wrap at its SDK call sites — this is now a documented convention (see `AGENTS.md` update) rather than a one-off. **A reminder to the user about this is owed at the end of this build.**
 - Retry parameters (`_MAX_ATTEMPTS`, backoff bounds) are hardcoded module-level constants, not environment-configurable — no env var was requested, and the issue doesn't call for runtime tuning.
 - Honoring a `Retry-After`-style header is not applicable — confirmed YNAB does not send one on 429 responses.
-- No change to `errors.py`/`translate_api_exception` — it already surfaces the real YNAB error detail correctly; the retry helper is designed specifically to not require touching it.
+- Actual scheduling of a deferred retry once the rate limit clears — the MCP server surfaces enough information for the calling agent to do this itself; it does not implement a scheduler.
