@@ -6,7 +6,7 @@ import ynab
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from ynab_mcp.client import resolve_budget_id
+from ynab_mcp.client import call_with_retry, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 
@@ -69,7 +69,9 @@ def get_month_info(
     resolved_month = parse_month(month)
     api = ynab.MonthsApi(client)
     try:
-        response = api.get_plan_month(plan_id=budget_id, month=resolved_month)
+        response = call_with_retry(
+            lambda: api.get_plan_month(plan_id=budget_id, month=resolved_month)
+        )
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc
     return response.data.month
