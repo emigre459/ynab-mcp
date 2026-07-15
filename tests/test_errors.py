@@ -59,3 +59,34 @@ def test_translate_amazon_exception_generic_error_includes_message() -> None:
 
     assert isinstance(result, ToolError)
     assert "something broke" in str(result)
+
+
+def test_translate_api_exception_enriches_429_with_rate_limit_guidance() -> None:
+    """A 429 gets rate-limit context and retry-timing guidance appended."""
+    exc = ynab.ApiException(
+        status=429,
+        reason="Too Many Requests",
+        body='{"error": {"id": "429", "name": "too_many_requests", '
+        '"detail": "Too many requests"}}',
+    )
+
+    result = translate_api_exception(exc)
+
+    assert isinstance(result, ToolError)
+    assert "Too many requests" in str(result)
+    assert "rate limit" in str(result).lower()
+    assert "hour" in str(result).lower()
+
+
+def test_translate_api_exception_does_not_enrich_non_429() -> None:
+    """A non-429 ApiException gets only the raw detail, no enrichment appended."""
+    exc = ynab.ApiException(
+        status=500,
+        reason="Internal Server Error",
+        body='{"error": {"id": "500", "name": "internal", '
+        '"detail": "Service unavailable"}}',
+    )
+
+    result = translate_api_exception(exc)
+
+    assert str(result) == "Service unavailable"

@@ -22,10 +22,22 @@ def translate_api_exception(exc: ynab.ApiException) -> ToolError:
     -------
     fastmcp.exceptions.ToolError
         A ``ToolError`` carrying the YNAB API's error detail message, ready
-        to be raised so the MCP client sees the real failure reason.
+        to be raised so the MCP client sees the real failure reason. A 429
+        gets additional rate-limit context appended, since YNAB's raw
+        detail for a 429 is just the four words "Too many requests" --
+        not enough for the calling agent to explain what happened or judge
+        whether/when to retry.
     """
     detail = _extract_detail(exc)
     logger.error("YNAB API request failed (status=%s): %s", exc.status, detail)
+    if exc.status == 429:
+        return ToolError(
+            f"{detail} — YNAB rate limit exceeded (this access token allows 200 "
+            "requests per rolling hour, and survived automatic retries already). "
+            "The API does not report an exact reset time; the quota clears "
+            "roughly one hour after the earliest request in the current window. "
+            "Wait before retrying, or let the user know to try again in about an hour."
+        )
     return ToolError(detail)
 
 
