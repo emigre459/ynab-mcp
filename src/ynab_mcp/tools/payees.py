@@ -3,7 +3,7 @@
 import ynab
 from fastmcp import FastMCP
 
-from ynab_mcp.client import resolve_budget_id
+from ynab_mcp.client import call_with_retry, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 
@@ -30,7 +30,7 @@ def list_payees(client: ynab.ApiClient, budget_id: str) -> list[ynab.Payee]:
     """
     api = ynab.PayeesApi(client)
     try:
-        response = api.get_payees(plan_id=budget_id)
+        response = call_with_retry(lambda: api.get_payees(plan_id=budget_id))
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc
     return response.data.payees
