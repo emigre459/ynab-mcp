@@ -40,8 +40,9 @@ established in issue #11 and extended by every later epic-#10 child that adds
 tools:
 
 - `config.py` — `Settings.from_env()` reads `YNAB_PAT` (required, fail-hard),
-  `YNAB_DEFAULT_BUDGET_ID` (optional), `YNAB_READ_ONLY` (parsed, unenforced
-  until write tools exist). `AmazonSettings.from_env()` reads
+  `YNAB_DEFAULT_BUDGET_ID` (optional), `YNAB_READ_ONLY` (defaults `true`,
+  enforced by every write tool via `client.require_writable`).
+  `AmazonSettings.from_env()` reads
   `AMAZON_USERNAME`/`AMAZON_PASSWORD`/`AMAZON_OTP_SECRET_KEY` — fail-**soft**
   (returns `None`, never raises), the deliberate asymmetry with `Settings`:
   Amazon integration is optional server-wide functionality.
@@ -49,7 +50,11 @@ tools:
   is the only place the public `budget_id` terminology (matches YNAB's
   product UI) translates to the SDK's internal `plan_id` (the `ynab` client
   renamed `Budget`→`Plan` in v4). Never let `plan_id` leak into a public tool
-  name/param.
+  name/param. `require_writable(settings)` raises `ToolError` when
+  `YNAB_READ_ONLY=true`; every write tool's registered closure calls it as
+  its first statement, before `resolve_budget_id` and before touching the
+  API — write tools are always *registered* (discoverable in both modes),
+  only *execution* is gated.
 - `amazon_client.py` — builds the shared `AmazonSession`/`AmazonOrders`/
   `AmazonTransactions` clients when Amazon is configured. Registers
   `amazonorders.contrib.browser.playwright`'s `PlaywrightAcicForm`/
@@ -87,9 +92,28 @@ tools:
   category data, with no new API surface beyond what `months.py` already
   calls; `find_amazon_transactions.py` additionally takes the Amazon
   clients and reuses `transactions.py`'s `list_transactions()` rather than
-  re-implementing YNAB fetching).
+  re-implementing YNAB fetching). Write-tool modules (`transactions_write.py`,
+  `budgeted_amount.py`, `payees_write.py`, `scheduled_transactions.py`,
+  issue #12) additionally give each registered closure its own
+  required-field validation and a `fastmcp.Client`-based closure-dispatch
+  test — the underlying plain function alone doesn't exercise that
+  branching.
+  - **`transactions_write.py`'s `bulk_manage_transactions` update path
+    cannot use `TransactionsApi.update_transactions()`.** The installed
+    `ynab` SDK (v4.2.0, latest on PyPI) has a real bug: its generated
+    `_response_types_map` for that endpoint keys off HTTP `209` instead of
+    the `200` YNAB actually returns, so the convenience method silently
+    returns `None` on every real, successful call. The fix uses
+    `update_transactions_with_http_info()` and parses `raw_data` directly
+    with `ynab.SaveTransactionsResponse.model_validate_json(...)`,
+    bypassing the broken status-code dispatch. Reported upstream:
+    [ynab/ynab-sdk-python#33](https://github.com/ynab/ynab-sdk-python/issues/33)
+    ([fix PR](https://github.com/ynab/ynab-sdk-python/pull/34)) — if/when a
+    corrected SDK version ships, this workaround can likely be reverted to
+    the plain convenience method (confirm the fix landed before doing so).
 - `server.py` — `build_server()` wires it all together; `list-budgets` is
-  registered only when no default budget is configured.
+  registered only when no default budget is configured; all four write
+  tools are always registered (see `client.require_writable` above).
   `find-amazon-transactions` is registered only when `AmazonSettings.from_env()`
   succeeds **and** `amazon_session.login()` succeeds at startup (caught and
   logged to stderr on failure, fail-soft — a broken/expired Amazon session
@@ -97,7 +121,8 @@ tools:
   entry point (`[project.scripts]` in `pyproject.toml`).
 
 Design rationale: `docs/superpowers/specs/2026-07-12-core-ynab-mcp-server-design.md`
-(core server), `docs/superpowers/specs/2026-07-12-find-amazon-transactions-design.md`
+(core server), `docs/superpowers/specs/2026-07-12-transaction-budget-write-tools-design.md`
+(write tools), `docs/superpowers/specs/2026-07-12-find-amazon-transactions-design.md`
 (Amazon matching — includes several "Correction from live testing" notes worth
 reading before touching this area again: a `grand_total` sign-convention gotcha,
 why blank `order_number`s must still be matchable, and the login-at-startup fix).

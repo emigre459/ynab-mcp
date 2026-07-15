@@ -52,3 +52,20 @@ def resolve_budget_id(budget_id: str | None, settings: Settings) -> str:
     raise ToolError(
         "No budget_id provided and YNAB_DEFAULT_BUDGET_ID is not configured."
     )
+
+
+def require_writable(settings: Settings) -> None:
+    """Guard a write tool against ``YNAB_READ_ONLY``.
+
+    Parameters
+    ----------
+    settings : Settings
+        The server's parsed configuration.
+
+    Raises
+    ------
+    ToolError
+        If ``settings.ynab_read_only`` is ``True``.
+    """
+    if settings.ynab_read_only:
+        raise ToolError("YNAB_READ_ONLY is enabled; write operations are disabled.")

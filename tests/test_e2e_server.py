@@ -27,9 +27,9 @@ async def _list_tool_names(transport: StdioTransport) -> set[str]:
 
 @pytest.mark.e2e
 def test_uv_run_ynab_mcp_stdio_server_lists_expected_tools() -> None:
-    """The real stdio subprocess launches and lists all 10 read-only tools.
+    """The real stdio subprocess launches and lists all 14 tools.
 
-    Uses a dummy YNAB_PAT: listing tools never calls the YNAB API, so no
+    7 read-only + 4 write + 3 analysis tools. Uses a dummy YNAB_PAT: listing tools never calls the YNAB API, so no
     live credentials are needed for this smoke check. YNAB_DEFAULT_BUDGET_ID
     and the AMAZON_* vars are explicitly cleared so a developer's local .env
     (which may set a real default budget or Amazon credentials) can't change
@@ -57,6 +57,10 @@ def test_uv_run_ynab_mcp_stdio_server_lists_expected_tools() -> None:
         "get-month-info",
         "list-payees",
         "lookup-entity-by-id",
+        "bulk-manage-transactions",
+        "manage-budgeted-amount",
+        "manage-payees",
+        "manage-scheduled-transaction",
         "find-payee-transactions",
         "flag-category-spend",
         "analyze-category-trends",

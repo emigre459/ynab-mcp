@@ -1,4 +1,4 @@
-"""FastMCP stdio server exposing read-only YNAB data."""
+"""FastMCP stdio server exposing read-only and write YNAB tools."""
 
 import sys
 
@@ -14,6 +14,7 @@ from ynab_mcp.client import build_api_client
 from ynab_mcp.config import AmazonSettings, Settings
 from ynab_mcp.tools import (
     accounts,
+    budgeted_amount,
     budgets,
     categories,
     find_amazon_transactions,
@@ -21,8 +22,11 @@ from ynab_mcp.tools import (
     months,
     payee_patterns,
     payees,
+    payees_write,
+    scheduled_transactions,
     spend_analysis,
     transactions,
+    transactions_write,
 )
 
 
@@ -30,8 +34,10 @@ def build_server() -> FastMCP:
     """Build and wire the YNAB MCP server.
 
     Reads configuration from the environment, constructs a shared YNAB API
-    client, and registers every read-only tool. ``list-budgets`` is
-    registered only when no default budget is configured.
+    client, and registers every tool. ``list-budgets`` is registered only
+    when no default budget is configured. Write tools are always
+    registered -- ``YNAB_READ_ONLY`` is enforced per-call by each write
+    tool, not by hiding the tools from discovery.
     ``find-amazon-transactions`` is registered only when Amazon credentials
     (``AMAZON_USERNAME``/``AMAZON_PASSWORD``) are configured *and* a session
     can be established: ``AmazonSession.login()`` is called once here, at
@@ -63,6 +69,10 @@ def build_server() -> FastMCP:
     months.register(mcp, client, settings)
     payees.register(mcp, client, settings)
     lookup.register(mcp, client, settings)
+    transactions_write.register(mcp, client, settings)
+    budgeted_amount.register(mcp, client, settings)
+    payees_write.register(mcp, client, settings)
+    scheduled_transactions.register(mcp, client, settings)
     payee_patterns.register(mcp, client, settings)
     spend_analysis.register(mcp, client, settings)
 

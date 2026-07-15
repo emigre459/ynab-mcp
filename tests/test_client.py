@@ -3,7 +3,7 @@
 import pytest
 from fastmcp.exceptions import ToolError
 
-from ynab_mcp.client import build_api_client, resolve_budget_id
+from ynab_mcp.client import build_api_client, require_writable, resolve_budget_id
 from ynab_mcp.config import Settings
 
 
@@ -42,3 +42,18 @@ def test_resolve_budget_id_raises_when_neither_present() -> None:
 
     with pytest.raises(ToolError, match="budget_id"):
         resolve_budget_id(None, settings)
+
+
+def test_require_writable_raises_when_read_only() -> None:
+    """A read-only configuration blocks the call with a clear ToolError."""
+    settings = Settings(ynab_pat="x", ynab_default_budget_id=None, ynab_read_only=True)
+
+    with pytest.raises(ToolError, match="YNAB_READ_ONLY"):
+        require_writable(settings)
+
+
+def test_require_writable_passes_when_writable() -> None:
+    """A writable configuration does not raise."""
+    settings = Settings(ynab_pat="x", ynab_default_budget_id=None, ynab_read_only=False)
+
+    require_writable(settings)
