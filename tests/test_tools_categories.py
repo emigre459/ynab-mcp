@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp.exceptions import ToolError
 from pytest import raises
@@ -48,3 +49,24 @@ def test_list_categories_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Budget not found"):
         list_categories(client, "missing-budget")
+
+
+def test_list_categories_retries_transient_failure(mocker: MockerFixture) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    categories_api = mocker.patch("ynab_mcp.tools.categories.ynab.CategoriesApi")
+    group_categories = [SimpleNamespace(id="c1", name="Groceries")]
+    categories_api.return_value.get_categories.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(
+            data=SimpleNamespace(
+                category_groups=[SimpleNamespace(categories=group_categories)]
+            )
+        ),
+    ]
+
+    result = list_categories(client, "budget-1")
+
+    assert result == group_categories
+    assert categories_api.return_value.get_categories.call_count == 2
