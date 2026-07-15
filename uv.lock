@@ -1345,6 +1345,15 @@ wheels = [
 ]
 
 [[package]]
+name = "tenacity"
+version = "9.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz", hash = "sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a", size = 49413, upload-time = "2026-02-07T10:45:33.841Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl", hash = "sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55", size = 28926, upload-time = "2026-02-07T10:45:32.24Z" },
+]
+
+[[package]]
 name = "typing-extensions"
 version = "4.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1483,6 +1492,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "tenacity" },
     { name = "ynab" },
 ]
 
@@ -1504,6 +1514,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=3.4.4" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "python-dotenv", specifier = ">=1.2" },
+    { name = "tenacity", specifier = ">=9.1.4" },
     { name = "ynab", specifier = ">=4.2.0" },
 ]
 

@@ -10,6 +10,7 @@ dependencies = [
     "fastmcp>=3.4.4",
     "pydantic>=2.12",
     "python-dotenv>=1.2",
+    "tenacity>=9.1.4",
     "ynab>=4.2.0",
 ]
 
