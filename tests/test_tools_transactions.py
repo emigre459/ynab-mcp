@@ -3,6 +3,7 @@
 from datetime import date
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp.exceptions import ToolError
 from pytest import raises
@@ -121,3 +122,20 @@ def test_list_transactions_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Budget not found"):
         list_transactions(client, "missing-budget")
+
+
+def test_list_transactions_retries_transient_failure(mocker: MockerFixture) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    transactions_api = mocker.patch("ynab_mcp.tools.transactions.ynab.TransactionsApi")
+    fake_transactions = [SimpleNamespace(id="t1")]
+    transactions_api.return_value.get_transactions.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(transactions=fake_transactions)),
+    ]
+
+    result = list_transactions(client, "budget-1")
+
+    assert result == fake_transactions
+    assert transactions_api.return_value.get_transactions.call_count == 2
