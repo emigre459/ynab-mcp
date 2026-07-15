@@ -3,6 +3,7 @@
 from datetime import date
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp.exceptions import ToolError
 from pytest import raises
@@ -119,3 +120,20 @@ def test_lookup_raises_tool_error_on_api_exception(mocker: MockerFixture) -> Non
 
     with raises(ToolError, match="Account not found"):
         lookup_entity_by_id(client, "budget-1", "account", "missing")
+
+
+def test_lookup_account_retries_transient_failure(mocker: MockerFixture) -> None:
+    """A transient 429 on the account branch is retried and succeeds."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    accounts_api = mocker.patch("ynab_mcp.tools.lookup.ynab.AccountsApi")
+    fake_account = SimpleNamespace(id="a1", name="Checking")
+    accounts_api.return_value.get_account_by_id.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(account=fake_account)),
+    ]
+
+    result = lookup_entity_by_id(client, "budget-1", "account", "a1")
+
+    assert result == fake_account
+    assert accounts_api.return_value.get_account_by_id.call_count == 2

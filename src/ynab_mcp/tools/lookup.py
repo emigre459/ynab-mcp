@@ -6,7 +6,7 @@ import ynab
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from ynab_mcp.client import resolve_budget_id
+from ynab_mcp.client import call_with_retry, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 from ynab_mcp.tools.months import parse_month
@@ -59,36 +59,36 @@ def lookup_entity_by_id(
                 | ynab.Payee
                 | ynab.TransactionDetail
                 | ynab.MonthDetail
-            ) = (
-                ynab.AccountsApi(client)
-                .get_account_by_id(plan_id=budget_id, account_id=entity_id)  # type: ignore[arg-type]
-                .data.account
-            )
+            ) = call_with_retry(
+                lambda: ynab.AccountsApi(client).get_account_by_id(
+                    plan_id=budget_id, account_id=entity_id  # type: ignore[arg-type]
+                )
+            ).data.account
         elif entity_type == "category":
-            result = (
-                ynab.CategoriesApi(client)
-                .get_category_by_id(plan_id=budget_id, category_id=entity_id)
-                .data.category
-            )
+            result = call_with_retry(
+                lambda: ynab.CategoriesApi(client).get_category_by_id(
+                    plan_id=budget_id, category_id=entity_id
+                )
+            ).data.category
         elif entity_type == "payee":
-            result = (
-                ynab.PayeesApi(client)
-                .get_payee_by_id(plan_id=budget_id, payee_id=entity_id)
-                .data.payee
-            )
+            result = call_with_retry(
+                lambda: ynab.PayeesApi(client).get_payee_by_id(
+                    plan_id=budget_id, payee_id=entity_id
+                )
+            ).data.payee
         elif entity_type == "transaction":
-            result = (
-                ynab.TransactionsApi(client)
-                .get_transaction_by_id(plan_id=budget_id, transaction_id=entity_id)
-                .data.transaction
-            )
+            result = call_with_retry(
+                lambda: ynab.TransactionsApi(client).get_transaction_by_id(
+                    plan_id=budget_id, transaction_id=entity_id
+                )
+            ).data.transaction
         elif entity_type == "month":
             resolved_month = parse_month(entity_id)
-            result = (
-                ynab.MonthsApi(client)
-                .get_plan_month(plan_id=budget_id, month=resolved_month)
-                .data.month
-            )
+            result = call_with_retry(
+                lambda: ynab.MonthsApi(client).get_plan_month(
+                    plan_id=budget_id, month=resolved_month
+                )
+            ).data.month
         else:
             raise ToolError(
                 f"Unknown entity_type {entity_type!r}. Expected one of: "
