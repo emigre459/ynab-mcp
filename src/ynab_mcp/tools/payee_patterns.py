@@ -1,8 +1,9 @@
 """find-payee-transactions tool: locate a payee's transaction patterns."""
 
 import statistics
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
+from datetime import date
 from difflib import SequenceMatcher
 from typing import Literal
 
@@ -244,6 +245,8 @@ def find_payee_transactions(
     budget_id: str,
     payee_query: str,
     fuzzy_threshold: float = 0.6,
+    since_date: date | None = None,
+    until_date: date | None = None,
 ) -> list[PayeeGroupSummary]:
     """Find transaction patterns for payees matching a query.
 
@@ -258,6 +261,12 @@ def find_payee_transactions(
     fuzzy_threshold : float, optional
         The minimum ``difflib`` similarity ratio for a non-substring
         match, by default ``0.6``.
+    since_date : datetime.date | None, optional
+        Only consider transactions on or after this date, by default
+        ``None`` (YNAB's own API defaults to one year ago).
+    until_date : datetime.date | None, optional
+        Only consider transactions on or before this date, by default
+        ``None``.
 
     Returns
     -------
@@ -276,12 +285,22 @@ def find_payee_transactions(
 
     payees = list_payees(client, budget_id)
     matches = _match_payees(payees, payee_query, fuzzy_threshold)
+    if not matches:
+        return []
+
+    all_transactions = list_transactions(
+        client, budget_id, since_date=since_date, until_date=until_date
+    )
+    transactions_by_payee_id: dict[str, list[ynab.TransactionDetail]] = defaultdict(
+        list
+    )
+    for transaction in all_transactions:
+        if transaction.payee_id is not None:
+            transactions_by_payee_id[str(transaction.payee_id)].append(transaction)
 
     summaries: list[PayeeGroupSummary] = []
     for matched in matches:
-        transactions = list_transactions(
-            client, budget_id, payee_id=str(matched.payee.id)
-        )
+        transactions = transactions_by_payee_id.get(str(matched.payee.id), [])
         if not transactions:
             continue
         summaries.append(_summarize_group(matched, transactions))
@@ -304,7 +323,10 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
 
     @mcp.tool(name="find-payee-transactions")
     def find_payee_transactions_tool(
-        payee_query: str, budget_id: str | None = None
+        payee_query: str,
+        budget_id: str | None = None,
+        since_date: date | None = None,
+        until_date: date | None = None,
     ) -> list[dict[str, object]]:
         """Find transaction patterns for payees matching a query.
 
@@ -315,7 +337,19 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
         budget_id : str | None, optional
             The YNAB budget id, by default ``None`` (falls back to
             ``YNAB_DEFAULT_BUDGET_ID``).
+        since_date : datetime.date | None, optional
+            Only consider transactions on or after this date, by default
+            ``None`` (YNAB's own API defaults to one year ago).
+        until_date : datetime.date | None, optional
+            Only consider transactions on or before this date, by default
+            ``None``.
         """
         resolved_budget_id = resolve_budget_id(budget_id, settings)
-        summaries = find_payee_transactions(client, resolved_budget_id, payee_query)
+        summaries = find_payee_transactions(
+            client,
+            resolved_budget_id,
+            payee_query,
+            since_date=since_date,
+            until_date=until_date,
+        )
         return [asdict(summary) for summary in summaries]

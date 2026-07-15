@@ -1,5 +1,6 @@
 """Tests for ynab_mcp.tools.payee_patterns."""
 
+from datetime import date
 from types import SimpleNamespace
 
 from fastmcp.exceptions import ToolError
@@ -71,11 +72,13 @@ def _transaction(
     amount: int,
     category_name: str | None,
     subtransactions: list[SimpleNamespace] | None = None,
+    payee_id: str = "p1",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         amount=amount,
         category_name=category_name,
         subtransactions=subtransactions or [],
+        payee_id=payee_id,
     )
 
 
@@ -237,7 +240,9 @@ def test_find_payee_transactions_returns_summary_for_matched_payee(
     assert result[0].payee_id == "p1"
     assert result[0].transaction_count == 3
     list_payees_mock.assert_called_once_with(client, "budget-1")
-    list_transactions_mock.assert_called_once_with(client, "budget-1", payee_id="p1")
+    list_transactions_mock.assert_called_once_with(
+        client, "budget-1", since_date=None, until_date=None
+    )
 
 
 def test_find_payee_transactions_no_match_returns_empty_list(
@@ -290,16 +295,20 @@ def test_find_payee_transactions_groups_are_not_pooled_across_payees(
         SimpleNamespace(id="p1", name="Amazon.com"),
         SimpleNamespace(id="p2", name="AMZN Mktp US Amazon"),
     ]
-    transactions_by_payee = {
-        "p1": [_transaction(-5000, "Shopping")],
-        "p2": [_transaction(-3000, "Shopping"), _transaction(-3200, "Shopping")],
-    }
     list_transactions_mock = mocker.patch(
         "ynab_mcp.tools.payee_patterns.list_transactions"
     )
-    list_transactions_mock.side_effect = (
-        lambda client, budget_id, payee_id: transactions_by_payee[payee_id]
-    )
+    list_transactions_mock.return_value = [
+        SimpleNamespace(
+            payee_id="p1", amount=-5000, category_name="Shopping", subtransactions=[]
+        ),
+        SimpleNamespace(
+            payee_id="p2", amount=-3000, category_name="Shopping", subtransactions=[]
+        ),
+        SimpleNamespace(
+            payee_id="p2", amount=-3200, category_name="Shopping", subtransactions=[]
+        ),
+    ]
 
     result = find_payee_transactions(client, "budget-1", "amazon")
 
@@ -318,3 +327,106 @@ def test_find_payee_transactions_rejects_empty_query(
 
     with raises(ToolError, match="payee_query"):
         find_payee_transactions(client, "budget-1", "   ")
+
+
+def test_find_payee_transactions_calls_list_transactions_once_for_multiple_matches(
+    mocker: MockerFixture,
+) -> None:
+    """Multiple matched payees still call list_transactions exactly once."""
+    client = mocker.Mock()
+    list_payees_mock = mocker.patch("ynab_mcp.tools.payee_patterns.list_payees")
+    list_payees_mock.return_value = [
+        SimpleNamespace(id="p1", name="Amazon.com"),
+        SimpleNamespace(id="p2", name="AMZN Mktp US Amazon"),
+    ]
+    list_transactions_mock = mocker.patch(
+        "ynab_mcp.tools.payee_patterns.list_transactions"
+    )
+    list_transactions_mock.return_value = [
+        _transaction(-5000, "Shopping"),
+    ]
+
+    find_payee_transactions(client, "budget-1", "amazon")
+
+    list_transactions_mock.assert_called_once_with(
+        client, "budget-1", since_date=None, until_date=None
+    )
+
+
+def test_find_payee_transactions_zero_matches_never_calls_list_transactions(
+    mocker: MockerFixture,
+) -> None:
+    """No matched payees means list_transactions is never called at all."""
+    client = mocker.Mock()
+    list_payees_mock = mocker.patch("ynab_mcp.tools.payee_patterns.list_payees")
+    list_payees_mock.return_value = [SimpleNamespace(id="p1", name="Netflix")]
+    list_transactions_mock = mocker.patch(
+        "ynab_mcp.tools.payee_patterns.list_transactions"
+    )
+
+    result = find_payee_transactions(client, "budget-1", "walmart")
+
+    assert result == []
+    list_transactions_mock.assert_not_called()
+
+
+def test_find_payee_transactions_groups_batched_transactions_by_payee(
+    mocker: MockerFixture,
+) -> None:
+    """The single batched call's transactions are grouped by payee_id client-side."""
+    client = mocker.Mock()
+    list_payees_mock = mocker.patch("ynab_mcp.tools.payee_patterns.list_payees")
+    list_payees_mock.return_value = [
+        SimpleNamespace(id="p1", name="Amazon.com"),
+        SimpleNamespace(id="p2", name="AMZN Mktp US Amazon"),
+    ]
+    list_transactions_mock = mocker.patch(
+        "ynab_mcp.tools.payee_patterns.list_transactions"
+    )
+    list_transactions_mock.return_value = [
+        SimpleNamespace(
+            payee_id="p1", amount=-5000, category_name="Shopping", subtransactions=[]
+        ),
+        SimpleNamespace(
+            payee_id="p2", amount=-3000, category_name="Shopping", subtransactions=[]
+        ),
+        SimpleNamespace(
+            payee_id="p2", amount=-3200, category_name="Shopping", subtransactions=[]
+        ),
+        SimpleNamespace(
+            payee_id=None, amount=-100, category_name=None, subtransactions=[]
+        ),
+    ]
+
+    result = find_payee_transactions(client, "budget-1", "amazon")
+
+    assert len(result) == 2
+    assert result[0].payee_id == "p1"
+    assert result[0].transaction_count == 1
+    assert result[1].payee_id == "p2"
+    assert result[1].transaction_count == 2
+
+
+def test_find_payee_transactions_forwards_since_date_and_until_date(
+    mocker: MockerFixture,
+) -> None:
+    """since_date/until_date are forwarded to the single list_transactions call."""
+    client = mocker.Mock()
+    list_payees_mock = mocker.patch("ynab_mcp.tools.payee_patterns.list_payees")
+    list_payees_mock.return_value = [SimpleNamespace(id="p1", name="Amazon.com")]
+    list_transactions_mock = mocker.patch(
+        "ynab_mcp.tools.payee_patterns.list_transactions"
+    )
+    list_transactions_mock.return_value = []
+
+    find_payee_transactions(
+        client,
+        "budget-1",
+        "amazon",
+        since_date=date(2026, 1, 1),
+        until_date=date(2026, 6, 30),
+    )
+
+    list_transactions_mock.assert_called_once_with(
+        client, "budget-1", since_date=date(2026, 1, 1), until_date=date(2026, 6, 30)
+    )
