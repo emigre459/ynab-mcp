@@ -7,7 +7,7 @@ import ynab
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from ynab_mcp.client import require_writable, resolve_budget_id
+from ynab_mcp.client import call_with_retry, require_writable, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 
@@ -64,21 +64,24 @@ def create_scheduled_transaction(
     """
     api = ynab.ScheduledTransactionsApi(client)
     try:
-        response = api.create_scheduled_transaction(
-            plan_id=budget_id,
-            data=ynab.PostScheduledTransactionWrapper(
-                scheduled_transaction=ynab.SaveScheduledTransaction(
-                    account_id=account_id,
-                    var_date=date,
-                    amount=amount,
-                    payee_id=payee_id,
-                    payee_name=payee_name,
-                    category_id=category_id,
-                    memo=memo,
-                    flag_color=flag_color,
-                    frequency=frequency,
-                )
+        response = call_with_retry(
+            lambda: api.create_scheduled_transaction(
+                plan_id=budget_id,
+                data=ynab.PostScheduledTransactionWrapper(
+                    scheduled_transaction=ynab.SaveScheduledTransaction(
+                        account_id=account_id,
+                        var_date=date,
+                        amount=amount,
+                        payee_id=payee_id,
+                        payee_name=payee_name,
+                        category_id=category_id,
+                        memo=memo,
+                        flag_color=flag_color,
+                        frequency=frequency,
+                    )
+                ),
             ),
+            include_5xx=False,
         )
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc
@@ -143,22 +146,24 @@ def update_scheduled_transaction(
     """
     api = ynab.ScheduledTransactionsApi(client)
     try:
-        response = api.update_scheduled_transaction(
-            plan_id=budget_id,
-            scheduled_transaction_id=scheduled_transaction_id,
-            put_scheduled_transaction_wrapper=ynab.PutScheduledTransactionWrapper(
-                scheduled_transaction=ynab.SaveScheduledTransaction(
-                    account_id=account_id,
-                    var_date=date,
-                    amount=amount,
-                    payee_id=payee_id,
-                    payee_name=payee_name,
-                    category_id=category_id,
-                    memo=memo,
-                    flag_color=flag_color,
-                    frequency=frequency,
-                )
-            ),
+        response = call_with_retry(
+            lambda: api.update_scheduled_transaction(
+                plan_id=budget_id,
+                scheduled_transaction_id=scheduled_transaction_id,
+                put_scheduled_transaction_wrapper=ynab.PutScheduledTransactionWrapper(
+                    scheduled_transaction=ynab.SaveScheduledTransaction(
+                        account_id=account_id,
+                        var_date=date,
+                        amount=amount,
+                        payee_id=payee_id,
+                        payee_name=payee_name,
+                        category_id=category_id,
+                        memo=memo,
+                        flag_color=flag_color,
+                        frequency=frequency,
+                    )
+                ),
+            )
         )
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc
@@ -191,8 +196,10 @@ def delete_scheduled_transaction(
     """
     api = ynab.ScheduledTransactionsApi(client)
     try:
-        response = api.delete_scheduled_transaction(
-            plan_id=budget_id, scheduled_transaction_id=scheduled_transaction_id
+        response = call_with_retry(
+            lambda: api.delete_scheduled_transaction(
+                plan_id=budget_id, scheduled_transaction_id=scheduled_transaction_id
+            )
         )
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc

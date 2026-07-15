@@ -4,6 +4,7 @@ import asyncio
 from datetime import date
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
@@ -322,6 +323,117 @@ def test_manage_scheduled_transaction_tool_rejects_create_without_required_field
     ):
         asyncio.run(_call())
     create_mock.assert_not_called()
+
+
+def test_create_scheduled_transaction_retries_transient_429(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 is retried even though this create is 429-only."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    api = mocker.patch(
+        "ynab_mcp.tools.scheduled_transactions.ynab.ScheduledTransactionsApi"
+    )
+    fake_scheduled = SimpleNamespace(id="st1")
+    api.return_value.create_scheduled_transaction.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(scheduled_transaction=fake_scheduled)),
+    ]
+
+    result = create_scheduled_transaction(
+        client,
+        "budget-1",
+        "11111111-1111-1111-1111-111111111111",
+        date(2024, 3, 1),
+        -50000,
+        "monthly",
+    )
+
+    assert result == fake_scheduled
+    assert api.return_value.create_scheduled_transaction.call_count == 2
+
+
+def test_create_scheduled_transaction_does_not_retry_5xx(
+    mocker: MockerFixture,
+) -> None:
+    """A 5xx on create is ambiguous (may have already landed) -- no retry."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    api = mocker.patch(
+        "ynab_mcp.tools.scheduled_transactions.ynab.ScheduledTransactionsApi"
+    )
+    exc = ynab.ApiException(
+        status=500,
+        reason="Internal Server Error",
+        body='{"error": {"id": "500", "name": "internal", '
+        '"detail": "Service unavailable"}}',
+    )
+    api.return_value.create_scheduled_transaction.side_effect = [
+        exc,
+        SimpleNamespace(data=SimpleNamespace(scheduled_transaction=SimpleNamespace())),
+    ]
+
+    with raises(ToolError, match="Service unavailable"):
+        create_scheduled_transaction(
+            client,
+            "budget-1",
+            "11111111-1111-1111-1111-111111111111",
+            date(2024, 3, 1),
+            -50000,
+            "monthly",
+        )
+
+    assert api.return_value.create_scheduled_transaction.call_count == 1
+
+
+def test_update_scheduled_transaction_retries_transient_failure(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    api = mocker.patch(
+        "ynab_mcp.tools.scheduled_transactions.ynab.ScheduledTransactionsApi"
+    )
+    fake_scheduled = SimpleNamespace(id="st1")
+    api.return_value.update_scheduled_transaction.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(scheduled_transaction=fake_scheduled)),
+    ]
+
+    result = update_scheduled_transaction(
+        client,
+        "budget-1",
+        "st1",
+        "11111111-1111-1111-1111-111111111111",
+        date(2024, 3, 1),
+        -60000,
+        "monthly",
+    )
+
+    assert result == fake_scheduled
+    assert api.return_value.update_scheduled_transaction.call_count == 2
+
+
+def test_delete_scheduled_transaction_retries_transient_failure(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    api = mocker.patch(
+        "ynab_mcp.tools.scheduled_transactions.ynab.ScheduledTransactionsApi"
+    )
+    fake_scheduled = SimpleNamespace(id="st1", deleted=True)
+    api.return_value.delete_scheduled_transaction.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(scheduled_transaction=fake_scheduled)),
+    ]
+
+    result = delete_scheduled_transaction(client, "budget-1", "st1")
+
+    assert result == fake_scheduled
+    assert api.return_value.delete_scheduled_transaction.call_count == 2
 
 
 def test_manage_scheduled_transaction_tool_rejects_update_without_id(
