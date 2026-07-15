@@ -3,6 +3,7 @@
 import asyncio
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
@@ -141,7 +142,14 @@ def test_move_budgeted_amount_rolls_back_source_on_target_failure(
 
 
 def test_move_budgeted_amount_reports_failed_rollback(mocker: MockerFixture) -> None:
-    """If the rollback also fails, the error names the inconsistent state."""
+    """If the rollback also fails, the error names the inconsistent state.
+
+    The rollback's 500 is retryable (``include_5xx=True`` is the default),
+    so it must persist across all retry attempts -- not just the first --
+    for the rollback to actually exhaust retries and surface as a failure.
+    ``_wait`` is stubbed out so those retries don't sleep in real time.
+    """
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
     client = mocker.Mock()
     categories_api = mocker.patch("ynab_mcp.tools.budgeted_amount.ynab.CategoriesApi")
     categories_api.return_value.get_month_category_by_id.side_effect = [
@@ -151,6 +159,12 @@ def test_move_budgeted_amount_reports_failed_rollback(mocker: MockerFixture) -> 
         SimpleNamespace(data=SimpleNamespace(category=SimpleNamespace(budgeted=20000))),
     ]
     updated_from = SimpleNamespace(id="from-cat", budgeted=80000)
+    rollback_exc = ynab.ApiException(
+        status=500,
+        reason="Server Error",
+        body='{"error": {"id": "500", "name": "internal", '
+        '"detail": "Service unavailable"}}',
+    )
     categories_api.return_value.update_month_category.side_effect = [
         SimpleNamespace(data=SimpleNamespace(category=updated_from)),
         ynab.ApiException(
@@ -159,12 +173,9 @@ def test_move_budgeted_amount_reports_failed_rollback(mocker: MockerFixture) -> 
             body='{"error": {"id": "404", "name": "not_found", '
             '"detail": "Category not found"}}',
         ),
-        ynab.ApiException(
-            status=500,
-            reason="Server Error",
-            body='{"error": {"id": "500", "name": "internal", '
-            '"detail": "Service unavailable"}}',
-        ),
+        rollback_exc,
+        rollback_exc,
+        rollback_exc,
     ]
 
     with raises(ToolError, match="Rollback of the source category also failed"):
@@ -276,6 +287,54 @@ def test_manage_budgeted_amount_tool_rejects_assign_without_required_fields(
     with raises(ToolError, match="assign requires category_id and amount"):
         asyncio.run(_call())
     assign_mock.assert_not_called()
+
+
+def test_assign_budgeted_amount_retries_transient_failure(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    categories_api = mocker.patch("ynab_mcp.tools.budgeted_amount.ynab.CategoriesApi")
+    fake_category = SimpleNamespace(id="cat-1", budgeted=50000)
+    categories_api.return_value.update_month_category.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(category=fake_category)),
+    ]
+
+    result = assign_budgeted_amount(client, "budget-1", "current", "cat-1", 50000)
+
+    assert result == fake_category
+    assert categories_api.return_value.update_month_category.call_count == 2
+
+
+def test_move_budgeted_amount_retries_transient_failure_on_first_read(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 on the first read is retried; the whole move still succeeds."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    categories_api = mocker.patch("ynab_mcp.tools.budgeted_amount.ynab.CategoriesApi")
+    categories_api.return_value.get_month_category_by_id.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(
+            data=SimpleNamespace(category=SimpleNamespace(budgeted=100000))
+        ),
+        SimpleNamespace(data=SimpleNamespace(category=SimpleNamespace(budgeted=20000))),
+    ]
+    updated_from = SimpleNamespace(id="from-cat", budgeted=80000)
+    updated_to = SimpleNamespace(id="to-cat", budgeted=40000)
+    categories_api.return_value.update_month_category.side_effect = [
+        SimpleNamespace(data=SimpleNamespace(category=updated_from)),
+        SimpleNamespace(data=SimpleNamespace(category=updated_to)),
+    ]
+
+    result = move_budgeted_amount(
+        client, "budget-1", "current", "from-cat", "to-cat", 20000
+    )
+
+    assert result == {"from_category": updated_from, "to_category": updated_to}
+    assert categories_api.return_value.get_month_category_by_id.call_count == 3
 
 
 def test_manage_budgeted_amount_tool_rejects_move_without_required_fields(
