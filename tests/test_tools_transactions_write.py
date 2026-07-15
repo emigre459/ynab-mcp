@@ -3,6 +3,7 @@
 import json
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp.exceptions import ToolError
 from pytest import raises
@@ -349,3 +350,145 @@ def test_bulk_manage_transactions_update_parses_raw_response_directly(
     ]
     transactions_api.return_value.update_transactions_with_http_info.assert_called_once()
     transactions_api.return_value.update_transactions.assert_not_called()
+
+
+def test_bulk_manage_transactions_create_retries_transient_429(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 on the create group is retried and succeeds."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    transactions_api = mocker.patch(
+        "ynab_mcp.tools.transactions_write.ynab.TransactionsApi"
+    )
+    transactions_api.return_value.create_transaction.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(
+            data=SimpleNamespace(transactions=[SimpleNamespace(id="new-1")])
+        ),
+    ]
+
+    operations: list[dict[str, object]] = [
+        {
+            "action": "create",
+            "account_id": "11111111-1111-1111-1111-111111111111",
+            "amount": -1000,
+        },
+    ]
+
+    result = bulk_manage_transactions(client, "budget-1", operations)
+
+    assert result == [
+        {"action": "create", "id": "new-1", "status": "ok", "detail": None}
+    ]
+    assert transactions_api.return_value.create_transaction.call_count == 2
+
+
+def test_bulk_manage_transactions_create_does_not_retry_5xx(
+    mocker: MockerFixture,
+) -> None:
+    """A 5xx on create is ambiguous (may have already landed) -- no retry."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    transactions_api = mocker.patch(
+        "ynab_mcp.tools.transactions_write.ynab.TransactionsApi"
+    )
+    transactions_api.return_value.create_transaction.side_effect = [
+        ynab.ApiException(
+            status=500,
+            reason="Internal Server Error",
+            body='{"error": {"id": "500", "name": "internal", '
+            '"detail": "Service unavailable"}}',
+        ),
+        SimpleNamespace(
+            data=SimpleNamespace(transactions=[SimpleNamespace(id="new-1")])
+        ),
+    ]
+
+    operations: list[dict[str, object]] = [
+        {
+            "action": "create",
+            "account_id": "11111111-1111-1111-1111-111111111111",
+            "amount": -1000,
+        },
+    ]
+
+    result = bulk_manage_transactions(client, "budget-1", operations)
+
+    assert result[0]["status"] == "error"
+    assert result[0]["detail"] == "Service unavailable"
+    assert transactions_api.return_value.create_transaction.call_count == 1
+
+
+def test_bulk_manage_transactions_update_retries_transient_429(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 on the update group is retried and succeeds."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    transactions_api = mocker.patch(
+        "ynab_mcp.tools.transactions_write.ynab.TransactionsApi"
+    )
+    updated_raw = json.dumps(
+        {
+            "data": {
+                "transaction_ids": ["txn-1"],
+                "transactions": [
+                    {
+                        "id": "txn-1",
+                        "date": "2026-07-14",
+                        "amount": -5000,
+                        "cleared": "uncleared",
+                        "approved": True,
+                        "deleted": False,
+                        "account_id": "11111111-1111-1111-1111-111111111111",
+                        "account_name": "test account",
+                        "subtransactions": [],
+                    }
+                ],
+                "duplicate_import_ids": [],
+                "server_knowledge": 1,
+            }
+        }
+    ).encode()
+    transactions_api.return_value.update_transactions_with_http_info.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(raw_data=updated_raw),
+    ]
+
+    operations: list[dict[str, object]] = [
+        {"action": "update", "id": "txn-1", "approved": True},
+    ]
+
+    result = bulk_manage_transactions(client, "budget-1", operations)
+
+    assert result == [
+        {"action": "update", "id": "txn-1", "status": "ok", "detail": None}
+    ]
+    assert (
+        transactions_api.return_value.update_transactions_with_http_info.call_count == 2
+    )
+
+
+def test_bulk_manage_transactions_delete_retries_transient_429(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 on a delete is retried and succeeds."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    transactions_api = mocker.patch(
+        "ynab_mcp.tools.transactions_write.ynab.TransactionsApi"
+    )
+    transactions_api.return_value.delete_transaction.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(transaction=SimpleNamespace(id="txn-2"))),
+    ]
+
+    operations: list[dict[str, object]] = [{"action": "delete", "id": "txn-2"}]
+
+    result = bulk_manage_transactions(client, "budget-1", operations)
+
+    assert result == [
+        {"action": "delete", "id": "txn-2", "status": "ok", "detail": None}
+    ]
+    assert transactions_api.return_value.delete_transaction.call_count == 2
