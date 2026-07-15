@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp.exceptions import ToolError
 from pytest import raises
@@ -41,3 +42,20 @@ def test_list_budgets_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Unauthorized"):
         list_budgets(client)
+
+
+def test_list_budgets_retries_transient_failure(mocker: MockerFixture) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    plans_api = mocker.patch("ynab_mcp.tools.budgets.ynab.PlansApi")
+    fake_plans = [SimpleNamespace(id="1", name="Family Budget")]
+    plans_api.return_value.get_plans.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(plans=fake_plans)),
+    ]
+
+    result = list_budgets(client)
+
+    assert result == fake_plans
+    assert plans_api.return_value.get_plans.call_count == 2
