@@ -10,7 +10,7 @@ dependencies = [
     "fastmcp>=3.4.4",
     "pydantic>=2.12",
     "python-dotenv>=1.2",
-    "ynab>=4.2.0",
+    "ynab>=4.3.0",
 ]
 
 [project.scripts]
@@ -27,12 +27,12 @@ module-name = "ynab_mcp"
 dev = [
     "bandit>=1.9.4",
     "black>=26.3.0",
-    "mypy>=1.13.0",
+    "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pytest-mock>=3.15.1",
     "pytest-xdist>=3.6.1",
-    "ruff>=0.15.20",
+    "ruff>=0.15.22",
 ]
 
 [tool.black]
