@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-01
+- feat: add retry/backoff for transient YNAB API failures (#17) — a shared
+  `call_with_retry` helper (via `tenacity`) wraps every direct YNAB SDK call
+  across all 12 tool modules, retrying 429s (rate limit) and 5xxs with
+  exponential backoff, capped at 3 attempts. The two non-idempotent
+  create-only call sites (`bulk-manage-transactions`'s create group,
+  `manage-scheduled-transaction`'s create) retry 429 only, never 5xx, to
+  avoid risking a duplicate real transaction on an ambiguous server error.
+  `errors.py` now appends rate-limit context and retry-timing guidance to a
+  429's message once retries are exhausted, so a calling agent can inform
+  the user rather than surfacing YNAB's raw "Too many requests".
+- fix: batch `find-payee-transactions` into a single `list-transactions`
+  call instead of one per matched payee (#17) — this N+1 pattern was the
+  original trigger for the retry/backoff work above. New optional
+  `since_date`/`until_date` parameters let a caller narrow the fetch window
+  for budgets with heavy transaction volume.
+
 ## 2026-07-14
 - feat: add transaction & budget write tools (#12) — four new MCP tools
   gated by `YNAB_READ_ONLY`: `bulk-manage-transactions` (best-effort batch
