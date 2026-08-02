@@ -158,7 +158,6 @@ def test_build_server_registers_find_amazon_transactions_when_configured(
     monkeypatch.setenv("AMAZON_PASSWORD", "hunter2")
     monkeypatch.delenv("AMAZON_OTP_SECRET_KEY", raising=False)
     build_amazon_session = mocker.patch("ynab_mcp.server.build_amazon_session")
-    mocker.patch("ynab_mcp.server.build_amazon_orders")
     mocker.patch("ynab_mcp.server.build_amazon_transactions")
 
     mcp = build_server()
@@ -203,7 +202,6 @@ def test_build_server_omits_find_amazon_transactions_when_login_fails(
     build_amazon_session.return_value.login.side_effect = AmazonOrdersAuthError(
         "session expired"
     )
-    mocker.patch("ynab_mcp.server.build_amazon_orders")
     mocker.patch("ynab_mcp.server.build_amazon_transactions")
 
     mcp = build_server()

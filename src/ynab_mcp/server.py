@@ -1,14 +1,15 @@
 """FastMCP stdio server exposing read-only and write YNAB tools."""
 
+import functools
 import sys
 
 from amazonorders.exception import AmazonOrdersError
 from fastmcp import FastMCP
 
 from ynab_mcp.amazon_client import (
-    build_amazon_orders,
     build_amazon_session,
     build_amazon_transactions,
+    build_worker_amazon_orders,
 )
 from ynab_mcp.client import build_api_client
 from ynab_mcp.config import AmazonSettings, Settings
@@ -89,10 +90,16 @@ def build_server() -> FastMCP:
                 file=sys.stderr,
             )
         else:
-            amazon_orders_client = build_amazon_orders(amazon_session)
             amazon_transactions_client = build_amazon_transactions(amazon_session)
+            amazon_orders_client_factory = functools.partial(
+                build_worker_amazon_orders, amazon_settings
+            )
             find_amazon_transactions.register(
-                mcp, client, amazon_transactions_client, amazon_orders_client, settings
+                mcp,
+                client,
+                amazon_transactions_client,
+                amazon_orders_client_factory,
+                settings,
             )
 
     return mcp
