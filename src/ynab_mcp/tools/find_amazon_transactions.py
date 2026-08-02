@@ -1,5 +1,8 @@
 """find-amazon-transactions tool: match YNAB transactions to Amazon orders."""
 
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 import ynab
@@ -19,6 +22,7 @@ from ynab_mcp.tools.transactions import list_transactions
 _AMAZON_PAYEE_MARKERS = ("amazon", "amzn")
 _WHOLE_FOODS_MARKER = "whole foods"
 _DEFAULT_LOOKBACK_DAYS = 365
+_MAX_ENRICHMENT_WORKERS = 3
 
 
 def _is_amazon_like_payee(payee_name: str | None) -> bool:
@@ -101,7 +105,7 @@ def _serialize_amazon_transaction(transaction: Transaction) -> dict[str, object]
 def find_amazon_transactions(
     ynab_client: ynab.ApiClient,
     amazon_transactions_client: AmazonTransactions,
-    amazon_orders_client: AmazonOrders,
+    amazon_orders_client_factory: Callable[[], AmazonOrders],
     budget_id: str,
     since_date: date | None = None,
     until_date: date | None = None,
@@ -116,9 +120,12 @@ def find_amazon_transactions(
         A configured YNAB API client.
     amazon_transactions_client : amazonorders.transactions.AmazonTransactions
         A configured Amazon transactions client.
-    amazon_orders_client : amazonorders.orders.AmazonOrders
-        A configured Amazon orders client, used to enrich matches with
-        item-level detail.
+    amazon_orders_client_factory : Callable[[], amazonorders.orders.AmazonOrders]
+        A zero-argument callable that constructs a fresh, independently-
+        authenticated ``AmazonOrders`` client. Called at most once per
+        concurrent worker thread (see below), not once per order -- each
+        worker thread lazily builds and reuses its own client for the
+        duration of this call.
     budget_id : str
         The YNAB budget id.
     since_date : datetime.date | None, optional
@@ -201,22 +208,35 @@ def find_amazon_transactions(
 
     result = match_transactions(ynab_candidates, amazon_candidates, date_window_days)
 
-    orders_cache: dict[str, Order] = {}
+    distinct_order_numbers = {
+        amazon_by_ref[m.amazon_transaction_ref].order_number
+        for m in result.matches
+        if amazon_by_ref[m.amazon_transaction_ref].order_number
+    }
 
-    def _order_for(order_number: str) -> Order:
-        if order_number not in orders_cache:
-            try:
-                orders_cache[order_number] = amazon_orders_client.get_order(
-                    order_number
-                )
-            except AmazonOrdersError as exc:
-                raise translate_amazon_exception(exc) from exc
-        return orders_cache[order_number]
+    _thread_local = threading.local()
+
+    def _worker_client() -> AmazonOrders:
+        if not hasattr(_thread_local, "orders_client"):
+            _thread_local.orders_client = amazon_orders_client_factory()
+        return _thread_local.orders_client
+
+    def _fetch_order(order_number: str) -> Order:
+        try:
+            return _worker_client().get_order(order_number)
+        except AmazonOrdersError as exc:
+            raise translate_amazon_exception(exc) from exc
+
+    with ThreadPoolExecutor(max_workers=_MAX_ENRICHMENT_WORKERS) as executor:
+        order_futures = {
+            order_number: executor.submit(_fetch_order, order_number)
+            for order_number in distinct_order_numbers
+        }
 
     matches_out: list[dict[str, object]] = []
     for match in result.matches:
         real_order_number = amazon_by_ref[match.amazon_transaction_ref].order_number
-        order = _order_for(real_order_number) if real_order_number else None
+        order = order_futures[real_order_number].result() if real_order_number else None
         matches_out.append(
             {
                 "ynab_transaction": ynab_by_id[match.ynab_transaction_id].model_dump(
@@ -281,7 +301,7 @@ def register(
     mcp: FastMCP,
     ynab_client: ynab.ApiClient,
     amazon_transactions_client: AmazonTransactions,
-    amazon_orders_client: AmazonOrders,
+    amazon_orders_client_factory: Callable[[], AmazonOrders],
     settings: Settings,
 ) -> None:
     """Register the ``find-amazon-transactions`` tool on ``mcp``.
@@ -294,8 +314,10 @@ def register(
         A configured YNAB API client.
     amazon_transactions_client : amazonorders.transactions.AmazonTransactions
         A configured Amazon transactions client.
-    amazon_orders_client : amazonorders.orders.AmazonOrders
-        A configured Amazon orders client.
+    amazon_orders_client_factory : Callable[[], amazonorders.orders.AmazonOrders]
+        A zero-argument callable that constructs a fresh, independently-
+        authenticated Amazon orders client, used for concurrent per-order
+        enrichment fetches.
     settings : Settings
         The server's parsed configuration, used to resolve a default budget
         id when the caller omits one.
@@ -338,7 +360,7 @@ def register(
         return find_amazon_transactions(
             ynab_client,
             amazon_transactions_client,
-            amazon_orders_client,
+            amazon_orders_client_factory,
             resolved_budget_id,
             since_date=since_date,
             until_date=until_date,

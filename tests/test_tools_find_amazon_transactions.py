@@ -70,7 +70,10 @@ def test_find_amazon_transactions_returns_exact_match_with_reasoning(
     amazon_orders_client.get_order.return_value = _order(["Widget"])
 
     result = find_amazon_transactions(
-        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+        ynab_client,
+        amazon_transactions_client,
+        lambda: amazon_orders_client,
+        "budget-1",
     )
 
     assert len(result["matches"]) == 1  # type: ignore[arg-type]
@@ -111,7 +114,10 @@ def test_find_amazon_transactions_excludes_refunds_and_whole_foods(
     amazon_orders_client = mocker.Mock()
 
     result = find_amazon_transactions(
-        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+        ynab_client,
+        amazon_transactions_client,
+        lambda: amazon_orders_client,
+        "budget-1",
     )
 
     assert result["matches"] == []
@@ -135,7 +141,10 @@ def test_find_amazon_transactions_ignores_non_amazon_payees(
     amazon_orders_client = mocker.Mock()
 
     result = find_amazon_transactions(
-        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+        ynab_client,
+        amazon_transactions_client,
+        lambda: amazon_orders_client,
+        "budget-1",
     )
 
     assert result["matches"] == []
@@ -162,7 +171,10 @@ def test_find_amazon_transactions_surfaces_ambiguous_candidates(
     amazon_orders_client = mocker.Mock()
 
     result = find_amazon_transactions(
-        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+        ynab_client,
+        amazon_transactions_client,
+        lambda: amazon_orders_client,
+        "budget-1",
     )
 
     assert result["matches"] == []
@@ -202,7 +214,10 @@ def test_find_amazon_transactions_matches_blank_order_numbers_without_enrichment
     amazon_orders_client = mocker.Mock()
 
     result = find_amazon_transactions(
-        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+        ynab_client,
+        amazon_transactions_client,
+        lambda: amazon_orders_client,
+        "budget-1",
     )
 
     assert len(result["matches"]) == 1  # type: ignore[arg-type]
@@ -241,7 +256,10 @@ def test_find_amazon_transactions_does_not_fake_group_blank_order_numbers(
     amazon_orders_client = mocker.Mock()
 
     result = find_amazon_transactions(
-        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+        ynab_client,
+        amazon_transactions_client,
+        lambda: amazon_orders_client,
+        "budget-1",
     )
 
     assert len(result["matches"]) == 2  # type: ignore[arg-type]
@@ -277,7 +295,10 @@ def test_find_amazon_transactions_excludes_approved_by_default(
     amazon_orders_client = mocker.Mock()
 
     result = find_amazon_transactions(
-        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+        ynab_client,
+        amazon_transactions_client,
+        lambda: amazon_orders_client,
+        "budget-1",
     )
 
     assert result["matches"] == []
@@ -307,7 +328,7 @@ def test_find_amazon_transactions_includes_approved_when_requested(
     result = find_amazon_transactions(
         ynab_client,
         amazon_transactions_client,
-        amazon_orders_client,
+        lambda: amazon_orders_client,
         "budget-1",
         include_approved=True,
     )
@@ -330,5 +351,8 @@ def test_find_amazon_transactions_translates_auth_error(mocker: MockerFixture) -
 
     with raises(ToolError, match="scripts/amazon_login.py"):
         find_amazon_transactions(
-            ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+            ynab_client,
+            amazon_transactions_client,
+            lambda: amazon_orders_client,
+            "budget-1",
         )
