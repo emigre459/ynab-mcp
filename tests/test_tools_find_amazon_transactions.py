@@ -488,7 +488,10 @@ def test_find_amazon_transactions_reuses_worker_sessions_across_orders(
 
     10 distinct orders with a 3-worker pool should call the factory at
     most 3 times -- proving sessions are built once per worker thread and
-    reused, not rebuilt per fetch.
+    reused, not rebuilt per fetch. Uses an explicit lock-guarded counter
+    rather than Mock.call_count, since Mock's internal call-tracking isn't
+    guaranteed thread-safe under concurrent invocation from multiple
+    worker threads.
     """
     ynab_client = mocker.Mock()
     list_transactions = mocker.patch(
@@ -504,19 +507,23 @@ def test_find_amazon_transactions_reuses_worker_sessions_across_orders(
         for i in range(1, 11)
     ]
 
+    call_count_lock = threading.Lock()
+    call_count = 0
+
     def _client_factory() -> Mock:
+        nonlocal call_count
+        with call_count_lock:
+            call_count += 1
         client = mocker.Mock()
         client.get_order.side_effect = lambda order_number: _order(["Widget"])
         return client
 
-    factory = mocker.Mock(side_effect=_client_factory)
-
     result = find_amazon_transactions(
         ynab_client,
         amazon_transactions_client,
-        factory,
+        _client_factory,
         "budget-1",
     )
 
     assert len(result["matches"]) == 10  # type: ignore[arg-type]
-    assert factory.call_count <= 3
+    assert call_count <= 3
