@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp.exceptions import ToolError
 from pytest import raises
@@ -40,3 +41,20 @@ def test_list_payees_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Budget not found"):
         list_payees(client, "missing-budget")
+
+
+def test_list_payees_retries_transient_failure(mocker: MockerFixture) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    payees_api = mocker.patch("ynab_mcp.tools.payees.ynab.PayeesApi")
+    fake_payees = [SimpleNamespace(id="p1", name="Amazon")]
+    payees_api.return_value.get_payees.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(payees=fake_payees)),
+    ]
+
+    result = list_payees(client, "budget-1")
+
+    assert result == fake_payees
+    assert payees_api.return_value.get_payees.call_count == 2

@@ -3,6 +3,7 @@
 import ynab
 from fastmcp import FastMCP
 
+from ynab_mcp.client import call_with_retry
 from ynab_mcp.errors import translate_api_exception
 
 
@@ -26,7 +27,7 @@ def list_budgets(client: ynab.ApiClient) -> list[ynab.PlanSummary]:
     """
     api = ynab.PlansApi(client)
     try:
-        response = api.get_plans()
+        response = call_with_retry(lambda: api.get_plans())
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc
     return response.data.plans

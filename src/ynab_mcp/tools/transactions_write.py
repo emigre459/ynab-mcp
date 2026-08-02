@@ -7,7 +7,7 @@ import ynab
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from ynab_mcp.client import require_writable, resolve_budget_id
+from ynab_mcp.client import call_with_retry, require_writable, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 
@@ -120,13 +120,17 @@ def bulk_manage_transactions(
     create_indices = [i for i, op in enumerate(operations) if op["action"] == "create"]
     if create_indices:
         try:
-            response = api.create_transaction(
-                plan_id=budget_id,
-                data=ynab.PostTransactionsWrapper(
-                    transactions=[
-                        _build_new_transaction(operations[i]) for i in create_indices
-                    ]
+            response = call_with_retry(
+                lambda: api.create_transaction(
+                    plan_id=budget_id,
+                    data=ynab.PostTransactionsWrapper(
+                        transactions=[
+                            _build_new_transaction(operations[i])
+                            for i in create_indices
+                        ]
+                    ),
                 ),
+                include_5xx=False,
             )
             created = response.data.transactions or []
             for i, transaction in zip(create_indices, created):
@@ -175,14 +179,16 @@ def bulk_manage_transactions(
             # deserialization silently yields None on a real success.
             # Parsing raw_data directly with the response model sidesteps
             # that broken status-code map.
-            http_response = api.update_transactions_with_http_info(
-                plan_id=budget_id,
-                data=ynab.PatchTransactionsWrapper(
-                    transactions=[
-                        _build_updated_transaction(operations[i])
-                        for i in update_indices
-                    ]
-                ),
+            http_response = call_with_retry(
+                lambda: api.update_transactions_with_http_info(
+                    plan_id=budget_id,
+                    data=ynab.PatchTransactionsWrapper(
+                        transactions=[
+                            _build_updated_transaction(operations[i])
+                            for i in update_indices
+                        ]
+                    ),
+                )
             )
             response = ynab.SaveTransactionsResponse.model_validate_json(
                 http_response.raw_data
@@ -229,7 +235,11 @@ def bulk_manage_transactions(
     for i in delete_indices:
         transaction_id = str(operations[i]["id"])
         try:
-            api.delete_transaction(plan_id=budget_id, transaction_id=transaction_id)
+            call_with_retry(
+                lambda: api.delete_transaction(
+                    plan_id=budget_id, transaction_id=transaction_id
+                )
+            )
             results[i] = {
                 "action": "delete",
                 "id": transaction_id,

@@ -3,6 +3,7 @@
 from datetime import date
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp.exceptions import ToolError
 from pytest import approx, raises
@@ -141,6 +142,27 @@ def test_fetch_month_categories_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Budget not found"):
         _fetch_month_categories(client, "missing-budget", date(2024, 3, 1))
+
+
+def test_fetch_month_categories_retries_transient_failure(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    months_api = mocker.patch("ynab_mcp.tools.spend_analysis.ynab.MonthsApi")
+    visible = SimpleNamespace(id="cat-1", hidden=False, deleted=False)
+    months_api.return_value.get_plan_month.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(
+            data=SimpleNamespace(month=SimpleNamespace(categories=[visible]))
+        ),
+    ]
+
+    result = _fetch_month_categories(client, "budget-1", date(2024, 3, 1))
+
+    assert result == [visible]
+    assert months_api.return_value.get_plan_month.call_count == 2
 
 
 def _category(

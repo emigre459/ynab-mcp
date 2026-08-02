@@ -3,6 +3,7 @@
 import asyncio
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
@@ -196,3 +197,43 @@ def test_manage_payees_tool_rejects_merge_without_target(
     with raises(ToolError, match="merge requires source_payee_id and target_payee_id"):
         asyncio.run(_call())
     merge_mock.assert_not_called()
+
+
+def test_rename_payee_retries_transient_failure(mocker: MockerFixture) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    payees_api = mocker.patch("ynab_mcp.tools.payees_write.ynab.PayeesApi")
+    fake_payee = SimpleNamespace(id="p1", name="Amazon")
+    payees_api.return_value.update_payee.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(payee=fake_payee)),
+    ]
+
+    result = rename_payee(client, "budget-1", "p1", "Amazon")
+
+    assert result == fake_payee
+    assert payees_api.return_value.update_payee.call_count == 2
+
+
+def test_merge_payees_retries_transient_failure_on_read(
+    mocker: MockerFixture,
+) -> None:
+    """A transient 429 on the target read is retried; the merge still succeeds."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    payees_api = mocker.patch("ynab_mcp.tools.payees_write.ynab.PayeesApi")
+    target_payee = SimpleNamespace(id="p2", name="Amazon.com")
+    merged_payee = SimpleNamespace(id="p1", name="Amazon.com")
+    payees_api.return_value.get_payee_by_id.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(payee=target_payee)),
+    ]
+    payees_api.return_value.update_payee.return_value = SimpleNamespace(
+        data=SimpleNamespace(payee=merged_payee)
+    )
+
+    result = merge_payees(client, "budget-1", "p1", "p2")
+
+    assert result == merged_payee
+    assert payees_api.return_value.get_payee_by_id.call_count == 2

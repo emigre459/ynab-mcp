@@ -23,6 +23,10 @@ tests: ## Run pytest (excludes e2e/integration)
 e2e: ## Run E2E tests (spawns the real stdio server via `uv run ynab-mcp`)
 	@uv run pytest -m e2e -v --tb=short
 
+.PHONY: integration
+integration: ## Run integration tests (real SDK/HTTP stack against a local mock server, no live YNAB)
+	@uv run pytest -m integration -v --tb=short --no-cov
+
 .PHONY: run
 run: ## Run the YNAB MCP stdio server (reads .env for your real YNAB_PAT)
 	@uv run ynab-mcp

@@ -3,6 +3,7 @@
 from datetime import date
 from types import SimpleNamespace
 
+import tenacity
 import ynab
 from fastmcp.exceptions import ToolError
 from pytest import raises
@@ -61,3 +62,20 @@ def test_get_month_info_raises_tool_error_on_api_exception(
 
     with raises(ToolError, match="Budget not found"):
         get_month_info(client, "missing-budget", "2024-03-01")
+
+
+def test_get_month_info_retries_transient_failure(mocker: MockerFixture) -> None:
+    """A transient 429 is retried and the eventual success is returned."""
+    mocker.patch("ynab_mcp.client._wait", tenacity.wait_none())
+    client = mocker.Mock()
+    months_api = mocker.patch("ynab_mcp.tools.months.ynab.MonthsApi")
+    fake_month = SimpleNamespace(month=date(2024, 3, 1), budgeted=100000)
+    months_api.return_value.get_plan_month.side_effect = [
+        ynab.ApiException(status=429, reason="Too Many Requests", body=None),
+        SimpleNamespace(data=SimpleNamespace(month=fake_month)),
+    ]
+
+    result = get_month_info(client, "budget-1", "2024-03-01")
+
+    assert result == fake_month
+    assert months_api.return_value.get_plan_month.call_count == 2

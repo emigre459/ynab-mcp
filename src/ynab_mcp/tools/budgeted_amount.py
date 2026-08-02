@@ -6,7 +6,7 @@ import ynab
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from ynab_mcp.client import require_writable, resolve_budget_id
+from ynab_mcp.client import call_with_retry, require_writable, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 from ynab_mcp.tools.months import parse_month
@@ -43,13 +43,15 @@ def assign_budgeted_amount(
     resolved_month = parse_month(month)
     api = ynab.CategoriesApi(client)
     try:
-        response = api.update_month_category(
-            plan_id=budget_id,
-            month=resolved_month,
-            category_id=category_id,
-            data=ynab.PatchMonthCategoryWrapper(
-                category=ynab.SaveMonthCategory(budgeted=amount)
-            ),
+        response = call_with_retry(
+            lambda: api.update_month_category(
+                plan_id=budget_id,
+                month=resolved_month,
+                category_id=category_id,
+                data=ynab.PatchMonthCategoryWrapper(
+                    category=ynab.SaveMonthCategory(budgeted=amount)
+                ),
+            )
         )
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc
@@ -111,46 +113,56 @@ def move_budgeted_amount(
     resolved_month = parse_month(month)
     api = ynab.CategoriesApi(client)
     try:
-        from_current = api.get_month_category_by_id(
-            plan_id=budget_id, month=resolved_month, category_id=from_category_id
+        from_current = call_with_retry(
+            lambda: api.get_month_category_by_id(
+                plan_id=budget_id, month=resolved_month, category_id=from_category_id
+            )
         ).data.category.budgeted
-        to_current = api.get_month_category_by_id(
-            plan_id=budget_id, month=resolved_month, category_id=to_category_id
+        to_current = call_with_retry(
+            lambda: api.get_month_category_by_id(
+                plan_id=budget_id, month=resolved_month, category_id=to_category_id
+            )
         ).data.category.budgeted
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc
 
     try:
-        from_category = api.update_month_category(
-            plan_id=budget_id,
-            month=resolved_month,
-            category_id=from_category_id,
-            data=ynab.PatchMonthCategoryWrapper(
-                category=ynab.SaveMonthCategory(budgeted=from_current - amount)
-            ),
-        ).data.category
-    except ynab.ApiException as exc:
-        raise translate_api_exception(exc) from exc
-
-    try:
-        to_category = api.update_month_category(
-            plan_id=budget_id,
-            month=resolved_month,
-            category_id=to_category_id,
-            data=ynab.PatchMonthCategoryWrapper(
-                category=ynab.SaveMonthCategory(budgeted=to_current + amount)
-            ),
-        ).data.category
-    except ynab.ApiException as exc:
-        target_detail = str(translate_api_exception(exc))
-        try:
-            api.update_month_category(
+        from_category = call_with_retry(
+            lambda: api.update_month_category(
                 plan_id=budget_id,
                 month=resolved_month,
                 category_id=from_category_id,
                 data=ynab.PatchMonthCategoryWrapper(
-                    category=ynab.SaveMonthCategory(budgeted=from_current)
+                    category=ynab.SaveMonthCategory(budgeted=from_current - amount)
                 ),
+            )
+        ).data.category
+    except ynab.ApiException as exc:
+        raise translate_api_exception(exc) from exc
+
+    try:
+        to_category = call_with_retry(
+            lambda: api.update_month_category(
+                plan_id=budget_id,
+                month=resolved_month,
+                category_id=to_category_id,
+                data=ynab.PatchMonthCategoryWrapper(
+                    category=ynab.SaveMonthCategory(budgeted=to_current + amount)
+                ),
+            )
+        ).data.category
+    except ynab.ApiException as exc:
+        target_detail = str(translate_api_exception(exc))
+        try:
+            call_with_retry(
+                lambda: api.update_month_category(
+                    plan_id=budget_id,
+                    month=resolved_month,
+                    category_id=from_category_id,
+                    data=ynab.PatchMonthCategoryWrapper(
+                        category=ynab.SaveMonthCategory(budgeted=from_current)
+                    ),
+                )
             )
         except ynab.ApiException as rollback_exc:
             rollback_detail = str(translate_api_exception(rollback_exc))

@@ -7,7 +7,7 @@ import ynab
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from ynab_mcp.client import resolve_budget_id
+from ynab_mcp.client import call_with_retry, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 
@@ -70,29 +70,37 @@ def list_transactions(
         if account_id is not None:
             response: Union[
                 ynab.TransactionsResponse, ynab.HybridTransactionsResponse
-            ] = api.get_transactions_by_account(
-                plan_id=budget_id,
-                account_id=account_id,
-                since_date=since_date,
-                until_date=until_date,
+            ] = call_with_retry(
+                lambda: api.get_transactions_by_account(
+                    plan_id=budget_id,
+                    account_id=account_id,
+                    since_date=since_date,
+                    until_date=until_date,
+                )
             )
         elif category_id is not None:
-            response = api.get_transactions_by_category(
-                plan_id=budget_id,
-                category_id=category_id,
-                since_date=since_date,
-                until_date=until_date,
+            response = call_with_retry(
+                lambda: api.get_transactions_by_category(
+                    plan_id=budget_id,
+                    category_id=category_id,
+                    since_date=since_date,
+                    until_date=until_date,
+                )
             )
         elif payee_id is not None:
-            response = api.get_transactions_by_payee(
-                plan_id=budget_id,
-                payee_id=payee_id,
-                since_date=since_date,
-                until_date=until_date,
+            response = call_with_retry(
+                lambda: api.get_transactions_by_payee(
+                    plan_id=budget_id,
+                    payee_id=payee_id,
+                    since_date=since_date,
+                    until_date=until_date,
+                )
             )
         else:
-            response = api.get_transactions(
-                plan_id=budget_id, since_date=since_date, until_date=until_date
+            response = call_with_retry(
+                lambda: api.get_transactions(
+                    plan_id=budget_id, since_date=since_date, until_date=until_date
+                )
             )
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc

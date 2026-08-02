@@ -6,7 +6,7 @@ import ynab
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from ynab_mcp.client import require_writable, resolve_budget_id
+from ynab_mcp.client import call_with_retry, require_writable, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 
@@ -39,10 +39,12 @@ def rename_payee(
     """
     api = ynab.PayeesApi(client)
     try:
-        response = api.update_payee(
-            plan_id=budget_id,
-            payee_id=payee_id,
-            data=ynab.PatchPayeeWrapper(payee=ynab.SavePayee(name=new_name)),
+        response = call_with_retry(
+            lambda: api.update_payee(
+                plan_id=budget_id,
+                payee_id=payee_id,
+                data=ynab.PatchPayeeWrapper(payee=ynab.SavePayee(name=new_name)),
+            )
         )
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc
@@ -85,13 +87,17 @@ def merge_payees(
     """
     api = ynab.PayeesApi(client)
     try:
-        target = api.get_payee_by_id(plan_id=budget_id, payee_id=target_payee_id)
-        response = api.update_payee(
-            plan_id=budget_id,
-            payee_id=source_payee_id,
-            data=ynab.PatchPayeeWrapper(
-                payee=ynab.SavePayee(name=target.data.payee.name)
-            ),
+        target = call_with_retry(
+            lambda: api.get_payee_by_id(plan_id=budget_id, payee_id=target_payee_id)
+        )
+        response = call_with_retry(
+            lambda: api.update_payee(
+                plan_id=budget_id,
+                payee_id=source_payee_id,
+                data=ynab.PatchPayeeWrapper(
+                    payee=ynab.SavePayee(name=target.data.payee.name)
+                ),
+            )
         )
     except ynab.ApiException as exc:
         raise translate_api_exception(exc) from exc

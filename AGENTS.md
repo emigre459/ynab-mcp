@@ -54,7 +54,10 @@ tools:
   `YNAB_READ_ONLY=true`; every write tool's registered closure calls it as
   its first statement, before `resolve_budget_id` and before touching the
   API — write tools are always *registered* (discoverable in both modes),
-  only *execution* is gated.
+  only *execution* is gated. `call_with_retry(func, *, include_5xx=True)`
+  (issue #17) wraps every direct YNAB SDK call — see "Retry/backoff
+  convention" below; any new tool module calling the SDK directly must use
+  it.
 - `amazon_client.py` — builds the shared `AmazonSession`/`AmazonOrders`/
   `AmazonTransactions` clients when Amazon is configured. Registers
   `amazonorders.contrib.browser.playwright`'s `PlaywrightAcicForm`/
@@ -120,12 +123,44 @@ tools:
   never takes down the whole YNAB server). `main()` is the `uv run ynab-mcp`
   entry point (`[project.scripts]` in `pyproject.toml`).
 
+### Retry/backoff convention (issue #17)
+
+Every direct YNAB SDK call (`ynab.SomeApi(client).some_method(...)`) must be
+wrapped: `response = call_with_retry(lambda: api.some_method(...))`, wrapping
+only the network call itself — never the surrounding `try`/`except` or any
+`.data.x` extraction. `call_with_retry` retries 429 always (a rate-limit
+rejection happens at the gateway, before any write occurs) and retries 5xx
+too **unless** `include_5xx=False` is passed explicitly.
+
+**`include_5xx=False` is required at any call site that creates a resource
+via a plain POST with no dedup/idempotency key** (e.g. `create_transaction`,
+`create_scheduled_transaction`) — a 5xx there is ambiguous about whether the
+write already landed server-side, so retrying on 5xx risks creating a
+**duplicate real record** in the user's budget. Every other call shape
+(GET reads; PATCH/PUT updates or deletes keyed by an existing id, which are
+idempotent to resend) uses the default `include_5xx=True`. When adding a new
+write tool, classify its call site against this rule before wiring it up —
+getting it backwards is a correctness bug with real financial-data
+consequences, not just a style nit.
+
+A tool module that only calls another *already-wrapped* tool module's plain
+function (e.g. `payee_patterns.py` calling `list_payees`/`list_transactions`,
+`find_amazon_transactions.py` calling `list_transactions`) inherits retry
+coverage for free and needs no `call_with_retry` of its own.
+
+`errors.py`'s `translate_api_exception` appends rate-limit context and
+retry-timing guidance to a 429's message once `call_with_retry`'s attempts
+are exhausted — every other status keeps its raw YNAB detail, unchanged.
+
 Design rationale: `docs/superpowers/specs/2026-07-12-core-ynab-mcp-server-design.md`
 (core server), `docs/superpowers/specs/2026-07-12-transaction-budget-write-tools-design.md`
 (write tools), `docs/superpowers/specs/2026-07-12-find-amazon-transactions-design.md`
 (Amazon matching — includes several "Correction from live testing" notes worth
 reading before touching this area again: a `grand_total` sign-convention gotcha,
-why blank `order_number`s must still be matchable, and the login-at-startup fix).
+why blank `order_number`s must still be matchable, and the login-at-startup fix),
+`docs/superpowers/specs/2026-07-14-retry-backoff-ynab-api-design.md` (retry/backoff
++ the `find-payee-transactions` N+1 fix — includes the full idempotency-safety
+reasoning behind the `include_5xx` rule above).
 
 ### One-time setup for `find-amazon-transactions`
 
@@ -145,6 +180,7 @@ Every change must pass `make pr_check` (lint + tests) before a PR is opened.
 | `make lint` | Format-check + lint + type-check |
 | `make tests` | Unit tests |
 | `make e2e` | E2E tests (spawns the real `uv run ynab-mcp` stdio subprocess) |
+| `make integration` | Integration tests (real `ynab` SDK/HTTP stack against a local mock server, no live YNAB) |
 | `make run` | Run the YNAB MCP stdio server (needs a real `YNAB_PAT` in `.env`) |
 | `make coverage` | Tests with an 80% coverage gate |
 | `make security` | Dependency / SAST scan |
