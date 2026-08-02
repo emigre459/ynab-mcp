@@ -1,11 +1,15 @@
 """Tests for ynab_mcp.amazon_client."""
 
+from amazonorders.exception import AmazonOrdersAuthError
+from fastmcp.exceptions import ToolError
+from pytest import raises
 from pytest_mock import MockerFixture
 
 from ynab_mcp.amazon_client import (
     build_amazon_orders,
     build_amazon_session,
     build_amazon_transactions,
+    build_worker_amazon_orders,
 )
 from ynab_mcp.config import AmazonSettings
 
@@ -85,3 +89,31 @@ def test_build_amazon_transactions_wraps_session(mocker: MockerFixture) -> None:
 
     transactions_cls.assert_called_once_with(session)
     assert transactions is transactions_cls.return_value
+
+
+def test_build_worker_amazon_orders_logs_in_and_wraps_session(
+    mocker: MockerFixture,
+) -> None:
+    """A fresh session is built, logged in, and wrapped in an AmazonOrders client."""
+    session_cls = mocker.patch("ynab_mcp.amazon_client.AmazonSession")
+    mocker.patch("ynab_mcp.amazon_client.AmazonOrdersConfig")
+    orders_cls = mocker.patch("ynab_mcp.amazon_client.AmazonOrders")
+
+    orders = build_worker_amazon_orders(_settings())
+
+    session_cls.return_value.login.assert_called_once_with()
+    orders_cls.assert_called_once_with(session_cls.return_value)
+    assert orders is orders_cls.return_value
+
+
+def test_build_worker_amazon_orders_translates_login_failure(
+    mocker: MockerFixture,
+) -> None:
+    """A failed login surfaces as a ToolError with remediation, not a raw exception."""
+    session_cls = mocker.patch("ynab_mcp.amazon_client.AmazonSession")
+    mocker.patch("ynab_mcp.amazon_client.AmazonOrdersConfig")
+    mocker.patch("ynab_mcp.amazon_client.AmazonOrders")
+    session_cls.return_value.login.side_effect = AmazonOrdersAuthError("expired")
+
+    with raises(ToolError, match="scripts/amazon_login.py"):
+        build_worker_amazon_orders(_settings())

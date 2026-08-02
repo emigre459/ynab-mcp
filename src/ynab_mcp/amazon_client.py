@@ -1,11 +1,13 @@
 """Amazon session construction and order/transaction client factories."""
 
 from amazonorders.conf import AmazonOrdersConfig
+from amazonorders.exception import AmazonOrdersError
 from amazonorders.orders import AmazonOrders
 from amazonorders.session import AmazonSession
 from amazonorders.transactions import AmazonTransactions
 
 from ynab_mcp.config import AmazonSettings
+from ynab_mcp.errors import translate_amazon_exception
 
 # Amazon commonly answers a login attempt with a JavaScript-based
 # bot-detection or "ACIC" challenge. The library's default auth-form chain
@@ -92,3 +94,41 @@ def build_amazon_transactions(session: AmazonSession) -> AmazonTransactions:
         A client for fetching Amazon per-charge transaction history.
     """
     return AmazonTransactions(session)
+
+
+def build_worker_amazon_orders(settings: AmazonSettings) -> AmazonOrders:
+    """Construct a fresh, independently-authenticated ``AmazonOrders`` client.
+
+    Unlike ``build_amazon_session``/``build_amazon_orders`` (used once at
+    server startup for the primary, long-lived session), this builds a
+    brand-new ``AmazonSession`` on every call and logs it in immediately.
+    It exists for ``find_amazon_transactions``' concurrent enrichment
+    fetches, where each worker thread needs its own independent
+    ``requests.Session`` to avoid any risk of concurrent cookie-jar access
+    on a session shared across threads. The login call fast-paths (a
+    single cheap request, no interactive challenge) as long as valid
+    persisted cookies already exist from the server's own startup login.
+
+    Parameters
+    ----------
+    settings : AmazonSettings
+        The server's parsed Amazon configuration.
+
+    Returns
+    -------
+    amazonorders.orders.AmazonOrders
+        A client backed by a freshly-authenticated, independent session.
+
+    Raises
+    ------
+    fastmcp.exceptions.ToolError
+        If the login attempt fails (e.g. the persisted session has
+        actually expired and a real interactive challenge would be
+        required, which cannot complete inside a worker thread).
+    """
+    session = build_amazon_session(settings)
+    try:
+        session.login()
+    except AmazonOrdersError as exc:
+        raise translate_amazon_exception(exc) from exc
+    return build_amazon_orders(session)
