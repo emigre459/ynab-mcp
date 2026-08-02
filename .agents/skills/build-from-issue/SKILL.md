@@ -362,7 +362,7 @@ Run the `changelog` skill to append the new work to `CHANGELOG.md`.
 
 ## Step 11: Finalize the Branch
 
-**Invoke `superpowers:finishing-a-development-branch`.** It verifies tests, presents the 4-option menu (merge locally / push + create PR / keep as-is / discard), creates the PR if chosen (using the repo's PR template), and handles worktree cleanup with provenance checks. Reference the issue in the PR body (`Closes #N`). If Step 7 surfaced any approved deviations, surface them in the PR body under a "Deviations from issue text" section so reviewers see intent.
+**Invoke `superpowers:finishing-a-development-branch`.** It verifies tests and presents its generic 4-option menu (merge locally / push + create PR / keep as-is / discard) — but per `.agents/rules/shared/pr-only-to-main.md`, "merge locally" is not a real choice on this repo (`main`'s ruleset requires a squash-merged PR); say so up front rather than presenting it as viable, and steer toward push + create PR. Once a PR is chosen, it's created using the repo's PR template, with worktree cleanup handled via provenance checks. Reference the issue in the PR body (`Closes #N`). If Step 7 surfaced any approved deviations, surface them in the PR body under a "Deviations from issue text" section so reviewers see intent.
 
 ## Step 11b: Momentum Hook — next card + Slack + kanban re-sync (runs whenever a PR was created)
 
