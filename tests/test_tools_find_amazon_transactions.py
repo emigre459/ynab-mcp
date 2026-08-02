@@ -1,5 +1,6 @@
 """Tests for ynab_mcp.tools.find_amazon_transactions."""
 
+import threading
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -356,3 +357,166 @@ def test_find_amazon_transactions_translates_auth_error(mocker: MockerFixture) -
             lambda: amazon_orders_client,
             "budget-1",
         )
+
+
+def test_find_amazon_transactions_attributes_enrichment_to_correct_order(
+    mocker: MockerFixture,
+) -> None:
+    """Each match's enrichment reflects its own order, never a neighbor's.
+
+    A single shared mock client is sufficient here: attribution
+    correctness comes from the order_futures dict keying in the
+    implementation, not from which physical client served a request.
+    """
+    ynab_client = mocker.Mock()
+    list_transactions = mocker.patch(
+        "ynab_mcp.tools.find_amazon_transactions.list_transactions"
+    )
+    list_transactions.return_value = [
+        _ynab_txn(mocker, "y1", -10000, date(2026, 6, 1), "Amazon.com"),
+        _ynab_txn(mocker, "y2", -20000, date(2026, 6, 2), "Amazon.com"),
+    ]
+    amazon_transactions_client = mocker.Mock()
+    amazon_transactions_client.get_transactions.return_value = [
+        _amazon_txn("111-1111111", -10.00, date(2026, 6, 1)),
+        _amazon_txn("222-2222222", -20.00, date(2026, 6, 2)),
+    ]
+    orders_by_number = {
+        "111-1111111": _order(["First Widget"]),
+        "222-2222222": _order(["Second Widget"]),
+    }
+    shared_client = mocker.Mock()
+    shared_client.get_order.side_effect = lambda order_number: orders_by_number[
+        order_number
+    ]
+
+    result = find_amazon_transactions(
+        ynab_client,
+        amazon_transactions_client,
+        lambda: shared_client,
+        "budget-1",
+    )
+
+    matches_by_order = {m["order_number"]: m for m in result["matches"]}  # type: ignore[attr-defined]
+    assert "First Widget" in matches_by_order["111-1111111"]["reasoning"]
+    assert "Second Widget" in matches_by_order["222-2222222"]["reasoning"]
+
+
+def test_find_amazon_transactions_fetches_orders_concurrently(
+    mocker: MockerFixture,
+) -> None:
+    """At least two order fetches are genuinely in flight at the same time.
+
+    A threading.Barrier forces two fetches to rendezvous before either can
+    proceed -- deterministic proof of real concurrency, not a timing
+    threshold (which would be flaky under CI load variance). If the
+    fetches ran sequentially, the second call would never reach the
+    barrier while the first is waiting, and the test would hang until
+    pytest's timeout.
+    """
+    ynab_client = mocker.Mock()
+    list_transactions = mocker.patch(
+        "ynab_mcp.tools.find_amazon_transactions.list_transactions"
+    )
+    list_transactions.return_value = [
+        _ynab_txn(mocker, "y1", -10000, date(2026, 6, 1), "Amazon.com"),
+        _ynab_txn(mocker, "y2", -20000, date(2026, 6, 2), "Amazon.com"),
+    ]
+    amazon_transactions_client = mocker.Mock()
+    amazon_transactions_client.get_transactions.return_value = [
+        _amazon_txn("111-1111111", -10.00, date(2026, 6, 1)),
+        _amazon_txn("222-2222222", -20.00, date(2026, 6, 2)),
+    ]
+    barrier = threading.Barrier(2, timeout=5)
+
+    def _get_order(order_number: str) -> SimpleNamespace:
+        barrier.wait()
+        return _order(["Widget"])
+
+    shared_client = mocker.Mock()
+    shared_client.get_order.side_effect = _get_order
+
+    result = find_amazon_transactions(
+        ynab_client,
+        amazon_transactions_client,
+        lambda: shared_client,
+        "budget-1",
+    )
+
+    assert len(result["matches"]) == 2  # type: ignore[arg-type]
+
+
+def test_find_amazon_transactions_one_order_failure_aborts_cleanly(
+    mocker: MockerFixture,
+) -> None:
+    """One failing order fetch aborts the whole call, matching today's behavior."""
+    ynab_client = mocker.Mock()
+    list_transactions = mocker.patch(
+        "ynab_mcp.tools.find_amazon_transactions.list_transactions"
+    )
+    list_transactions.return_value = [
+        _ynab_txn(mocker, "y1", -10000, date(2026, 6, 1), "Amazon.com"),
+        _ynab_txn(mocker, "y2", -20000, date(2026, 6, 2), "Amazon.com"),
+    ]
+    amazon_transactions_client = mocker.Mock()
+    amazon_transactions_client.get_transactions.return_value = [
+        _amazon_txn("111-1111111", -10.00, date(2026, 6, 1)),
+        _amazon_txn("222-2222222", -20.00, date(2026, 6, 2)),
+    ]
+
+    def _get_order(order_number: str) -> SimpleNamespace:
+        if order_number == "222-2222222":
+            raise AmazonOrdersAuthError("expired mid-run")
+        return _order(["Widget"])
+
+    shared_client = mocker.Mock()
+    shared_client.get_order.side_effect = _get_order
+
+    with raises(ToolError, match="scripts/amazon_login.py"):
+        find_amazon_transactions(
+            ynab_client,
+            amazon_transactions_client,
+            lambda: shared_client,
+            "budget-1",
+        )
+
+
+def test_find_amazon_transactions_reuses_worker_sessions_across_orders(
+    mocker: MockerFixture,
+) -> None:
+    """The factory is called at most once per worker thread, not once per order.
+
+    10 distinct orders with a 3-worker pool should call the factory at
+    most 3 times -- proving sessions are built once per worker thread and
+    reused, not rebuilt per fetch.
+    """
+    ynab_client = mocker.Mock()
+    list_transactions = mocker.patch(
+        "ynab_mcp.tools.find_amazon_transactions.list_transactions"
+    )
+    list_transactions.return_value = [
+        _ynab_txn(mocker, f"y{i}", -10000 * i, date(2026, 6, i), "Amazon.com")
+        for i in range(1, 11)
+    ]
+    amazon_transactions_client = mocker.Mock()
+    amazon_transactions_client.get_transactions.return_value = [
+        _amazon_txn(f"11{i}-1111111", -10.00 * i, date(2026, 6, i))
+        for i in range(1, 11)
+    ]
+
+    def _client_factory() -> Mock:
+        client = mocker.Mock()
+        client.get_order.side_effect = lambda order_number: _order(["Widget"])
+        return client
+
+    factory = mocker.Mock(side_effect=_client_factory)
+
+    result = find_amazon_transactions(
+        ynab_client,
+        amazon_transactions_client,
+        factory,
+        "budget-1",
+    )
+
+    assert len(result["matches"]) == 10  # type: ignore[arg-type]
+    assert factory.call_count <= 3
