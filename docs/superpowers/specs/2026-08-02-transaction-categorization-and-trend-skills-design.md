@@ -44,15 +44,23 @@ Both were rule-ordering/keyword-collision bugs inherent to regex matching on fre
 **Inputs:** `budget_id` (ask if ambiguous/unconfigured).
 
 **Flow:**
-1. Resolve `budget_id`.
+1. Resolve `budget_id`, then run `scripts/check_no_approvals.py snapshot` (see below) before any other reads/writes begin.
 2. Pull unapproved, non-deleted transactions via `list-transactions`, and the category list via `list-categories`. Use jq-based extraction for large results (per the tools' own guidance) rather than reading raw JSON directly.
 3. For each transaction, normalize payee identity from `import_payee_name_original`, not `payee_name`.
 4. Call `find-amazon-transactions` once for the relevant date range (not per-transaction). Call `find-payee-transactions` sequentially, one at a time — avoid unnecessary parallel fan-out even though #17's retry/backoff (merged) now makes the underlying calls resilient to transient 429s, since avoiding the rate-limit hit in the first place is still cheaper than retrying through it.
 5. Classify each transaction into the evidence tiers above. Separately identify internal transfers (via `transfer_account_id`, or the same-amount/near-date pattern across two tracked accounts observed in the prototype) — no category applies, never written.
 6. Issue one batched `bulk-manage-transactions` call with `update` operations for every tier-1 transaction, setting `category_id` (and a `memo` recording the evidence, e.g. "Auto-categorized: Amazon order #113-xxx — Hefty Storage Bags," since existing memos were confirmed null in the prototype data and this leaves an audit trail visible inside YNAB itself). `approved` is never included in any operation.
-7. Output a structured summary — counts written vs. needs-review (grouped by category and by reason), the needs-review list itself, and any payee data-quality mismatches found — plus a human-readable chat rendering of the same.
+7. Run `scripts/check_no_approvals.py verify <snapshot-file>` and fold its result into the summary.
+8. Output a structured summary — counts written vs. needs-review (grouped by category and by reason), the needs-review list itself, any payee data-quality mismatches found, and the approval-safety check result — plus a human-readable chat rendering of the same.
 
 **Error handling:** if `bulk-manage-transactions` partially fails, report exactly which transaction IDs succeeded and which didn't, with the real error — never claim full success on a partial write.
+
+**Deterministic approval-safety invariant.** The skill must never rely on its own prose instructions as the only guarantee it didn't approve anything — a bundled script, not skill text, does the actual verification, so the guarantee doesn't depend on the agent behaving as instructed:
+
+- `scripts/check_no_approvals.py` (bundled with this skill, run via `Bash`, independent of any MCP tool call — it talks to the YNAB API directly via the `ynab` Python client and the same `YNAB_PAT`/`.env` the server uses) has two subcommands: `snapshot` (writes the full set of unapproved, non-deleted transaction IDs for the budget to a temp file, plus the count) and `verify <snapshot-file>` (re-fetches, and asserts every ID in the snapshot is still present in the current unapproved set).
+- The skill runs `snapshot` as step 1, before any reads/writes begin, and `verify` at step 7, immediately after the `bulk-manage-transactions` call and before assembling the final summary.
+- `verify` checks **set containment**, not just `n_start <= n_end` — a bare count comparison can mask the exact bug we're guarding against (some transactions wrongly approved while an unrelated bank sync happens to add new unapproved ones in the same window, netting a count that still looks fine). Containment catches that; it's the same technique used to conclusively rule out an accidental approval during this project's own prototype session, just automated instead of ad hoc.
+- On violation, the script exits non-zero and prints the exact offending transaction IDs. The skill treats this as a hard failure — reports it prominently, does not continue or paper over it.
 
 ## Skill: `analyze-budget-trends` (#27, amended)
 
@@ -77,7 +85,7 @@ Both were rule-ordering/keyword-collision bugs inherent to regex matching on fre
 - **Tool scoping (`allowed-tools`):** `categorize-unapproved-transactions` gets `list-transactions`, `list-categories`, `find-payee-transactions`, `find-amazon-transactions`, `bulk-manage-transactions`, `AskUserQuestion`, `Bash`. `analyze-budget-trends` gets `list-transactions`, `flag-category-spend`, `analyze-category-trends`, `find-payee-transactions`, `WebSearch`, `AskUserQuestion`, `Bash`. Neither gets `manage-scheduled-transaction`, `manage-payees`, or anything that could approve a transaction.
 - **No git worktree at runtime.** Both skills operate live against YNAB via MCP tools and touch no repo files when invoked. (Building the skill files themselves, as with any repo-tracked change, does happen in a worktree — this session is in one.)
 - **Testing:** no unit-test suite — these are prompt-workflow skills, not Python. Validation is live, against the real budget, matching `build-from-issue`/`plan-issues` today. Deliberate trade-off, not an oversight.
-- **File layout:** `SKILL.md` only in each skill directory — no bundled scripts/references needed.
+- **File layout:** `analyze-budget-trends` is `SKILL.md` only. `categorize-unapproved-transactions` additionally bundles `scripts/check_no_approvals.py` (see "Deterministic approval-safety invariant" above) — referenced skill-root-relatively per `.agents/rules/shared/harness-agnostic-skills.md`. This is the only skill of the two with write access, so it's the only one that needs the check.
 
 ## Out of scope
 
