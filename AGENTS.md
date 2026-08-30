@@ -75,6 +75,15 @@ tools:
   dependency on the `ynab` or `amazon-orders` SDKs — both sides are
   pre-converted into small dataclasses by the caller, so it's fully
   fixture-testable.
+- `reconcile.py` — pure, zero-I/O statement-parsing + drift logic for the
+  `refresh-accounts` skill (same fixture-testable design as `amazon_matching.py`):
+  `parse_statement_text` (Chase single-account + Ally combined, keyed by account
+  tail), `compute_drift` / `account_drift_from_transactions` (the
+  **anchor-independent monthly-net-diff** method — statement activity vs YNAB
+  cleared activity over the same period; never `current_balance − register`, which
+  phantom composite-id entries contaminate), and `resolve_statement_file` (tolerant
+  of Chase's shifting statement-filename conventions). The `refresh-accounts` skill's
+  `scripts/reconcile_report.py` owns the PDF (`pypdf`) + YNAB I/O and calls these.
 - `errors.py` — `translate_api_exception` maps `ynab.ApiException` →
   `fastmcp.exceptions.ToolError`, carrying YNAB's real error detail, never
   masked. `translate_amazon_exception` does the same for
