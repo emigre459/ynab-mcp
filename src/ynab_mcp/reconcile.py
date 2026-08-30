@@ -15,6 +15,7 @@ contaminated by phantom / externally-generated composite-id entries.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -122,11 +123,15 @@ def parse_statement_text(text: str, account_tail: str | None = None) -> Statemen
         statement is ambiguous (multiple accounts, no ``account_tail``), or required
         fields are missing.
     """
+    # Detect by the issuer's website, which appears only in that bank's own header --
+    # NOT by "jpmorgan chase" / "ally bank", which show up in each other's transaction
+    # descriptions (an Ally statement lists a "JPMORGAN CHASE BANK" transfer; a Chase
+    # statement lists an "Ally Bank P2P" deposit).
     lowered = text.lower()
-    if "jpmorgan chase" in lowered or "chase.com" in lowered:
-        return _parse_chase(text)
-    if "ally bank" in lowered or "ally.com" in lowered:
+    if "ally.com" in lowered:
         return _parse_ally(text, account_tail)
+    if "chase.com" in lowered:
+        return _parse_chase(text)
     raise StatementParseError("Unrecognized statement format (neither Chase nor Ally).")
 
 
@@ -134,16 +139,22 @@ def _parse_chase(text: str) -> StatementInfo:
     period = re.search(
         r"([A-Z][a-z]+ \d{1,2}, \d{4})\s+through\s+([A-Z][a-z]+ \d{1,2}, \d{4})", text
     )
-    acct = re.search(r"Account Number:\s*\*?(\d+)", text)
+    # Chase's PDF text often leaves the "Account Number:" label empty and prints the
+    # number as a standalone ~15-digit line that recurs on every page, while a
+    # transaction reference number appears once -- so the most frequent 12-17 digit run
+    # is the account number. (Anchoring off the label is fragile: its trailing
+    # whitespace spans the newline into the next line's transaction ref.)
+    runs = re.findall(r"\b(\d{12,17})\b", text)
+    account_number = Counter(runs).most_common(1)[0][0] if runs else None
     beg = re.search(r"Beginning Balance\s*\$?([\d,]+\.\d\d)", text)
     end = re.search(r"Ending Balance\s*\$?([\d,]+\.\d\d)", text)
-    if not (period and acct and beg and end):
+    if not (period and account_number and beg and end):
         raise StatementParseError(
             "Chase statement missing period, account, or balances."
         )
     return StatementInfo(
         bank="chase",
-        account_tail=acct.group(1)[-4:],
+        account_tail=account_number[-4:],
         period_start=datetime.strptime(period.group(1), "%B %d, %Y").date(),
         period_end=datetime.strptime(period.group(2), "%B %d, %Y").date(),
         beginning_balance=_money(beg.group(1)),

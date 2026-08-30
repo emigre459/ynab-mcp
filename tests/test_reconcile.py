@@ -21,20 +21,32 @@ from ynab_mcp.reconcile import (
 
 # --- synthetic statement text (mirrors the real layouts' key lines only) ---
 
+# Mirrors the REAL Chase pypdf layout: the account number is a standalone line at the
+# top and the "Account Number:" label is left empty (verified against a live statement).
 CHASE_TEXT = """\
+ 000000872910033
 JPMorgan Chase Bank, N.A.
+Chase.com
 January 30, 2026 through February 27, 2026
-Account Number: 000000000330033
+Account Number:
+009180241474
+08/20 Ally Bank P2P Lynne E Rench Web ID: 1770527921
 CHECKING SUMMARY
 Beginning Balance $3,296.04
 Ending Balance $868.84
+Page 2 of 2
+ 000000872910033
 """
 
+# Includes a "JPMORGAN CHASE BANK" transfer line and "Ally Bank" — the exact cross-mention
+# that made naive substring detection classify this Ally statement as Chase.
 ALLY_TEXT = """\
 Ally Bank Member FDIC
+www.ally.com
 Money Market Savings
 Account Number: xxxxxx5170 Open Date: 11/02/2024
 Beginning Balance, as of 07/24/2026 $15,348.12
+Requested transfer to LYNNE E RENCH (JPMORGAN CHASE BANK, NA Saving 8659)
 Ending Balance, as of 08/23/2026 $11,384.76
 Spending Account
 Account Number: xxxxxx5181 Open Date: 11/02/2024
