@@ -13,6 +13,7 @@ from ynab_mcp.reconcile import (
     DriftResult,
     StatementInfo,
     StatementParseError,
+    account_drift_from_transactions,
     compute_drift,
     parse_statement_text,
     resolve_statement_file,
@@ -43,7 +44,7 @@ Ending Balance, as of 08/23/2026 $528.11
 
 
 class TestParseStatementText:
-    def test_chase_single_account(self):
+    def test_chase_single_account(self) -> None:
         info = parse_statement_text(CHASE_TEXT)
         assert info.bank == "chase"
         assert info.account_tail == "0033"
@@ -53,7 +54,7 @@ class TestParseStatementText:
         assert info.ending_balance == 868.84
         assert info.statement_net == -2427.20
 
-    def test_ally_selects_account_by_tail(self):
+    def test_ally_selects_account_by_tail(self) -> None:
         info = parse_statement_text(ALLY_TEXT, account_tail="5181")
         assert info.bank == "ally"
         assert info.account_tail == "5181"
@@ -62,22 +63,22 @@ class TestParseStatementText:
         assert info.beginning_balance == 528.07
         assert info.ending_balance == 528.11
 
-    def test_ally_other_account_by_tail(self):
+    def test_ally_other_account_by_tail(self) -> None:
         info = parse_statement_text(ALLY_TEXT, account_tail="5170")
         assert info.beginning_balance == 15348.12
         assert info.ending_balance == 11384.76
 
-    def test_ally_requires_tail_when_multiple(self):
+    def test_ally_requires_tail_when_multiple(self) -> None:
         with pytest.raises(StatementParseError):
             parse_statement_text(ALLY_TEXT)  # ambiguous: no tail given
 
-    def test_unrecognized_format_raises(self):
+    def test_unrecognized_format_raises(self) -> None:
         with pytest.raises(StatementParseError):
             parse_statement_text("just some random text with no bank markers")
 
 
 class TestComputeDrift:
-    def _stmt(self, begin, end):
+    def _stmt(self, begin: float, end: float) -> StatementInfo:
         return StatementInfo(
             bank="chase",
             account_tail="0033",
@@ -87,38 +88,85 @@ class TestComputeDrift:
             ending_balance=end,
         )
 
-    def test_exact_match_zero_drift(self):
+    def test_exact_match_zero_drift(self) -> None:
         stmt = self._stmt(1000.00, 1500.00)
         # YNAB recorded the same +500 activity and lands exactly on the statement close
-        res = compute_drift(stmt, ynab_net_over_period=500.00, ynab_cleared_as_of_close=1500.00)
+        res = compute_drift(
+            stmt, ynab_net_over_period=500.00, ynab_cleared_as_of_close=1500.00
+        )
         assert isinstance(res, DriftResult)
         assert res.statement_net == 500.00
         assert res.activity_drift == 0.00
         assert res.balance_drift == 0.00
         assert res.expected_adjustment == 0.00
 
-    def test_ynab_high_residual(self):
+    def test_ynab_high_residual(self) -> None:
         stmt = self._stmt(1000.00, 1500.00)
-        res = compute_drift(stmt, ynab_net_over_period=500.00, ynab_cleared_as_of_close=1600.00)
+        res = compute_drift(
+            stmt, ynab_net_over_period=500.00, ynab_cleared_as_of_close=1600.00
+        )
         assert res.balance_drift == 100.00  # YNAB $100 high vs statement
         assert res.expected_adjustment == -100.00  # adjust YNAB down $100 to match
 
-    def test_activity_drift_immune_to_phantom_noise(self):
+    def test_activity_drift_immune_to_phantom_noise(self) -> None:
         # Statement net is -1236.11; YNAB's cleared net over the same period is -990.44
         # (it happens to include phantom entries, but the monthly-net-diff still reports
         # the true activity gap without any balance-anchor contamination).
         stmt = self._stmt(3866.49, 2630.38)
-        res = compute_drift(stmt, ynab_net_over_period=-990.44, ynab_cleared_as_of_close=2630.38)
+        res = compute_drift(
+            stmt, ynab_net_over_period=-990.44, ynab_cleared_as_of_close=2630.38
+        )
         assert res.statement_net == -1236.11
         assert res.activity_drift == 245.67
         assert res.balance_drift == 0.00
 
 
-class TestResolveStatementFile:
-    def test_override_short_circuits(self):
-        assert resolve_statement_file("chase", "0033", ["a.pdf"], override="/x/y.pdf") == "/x/y.pdf"
+class TestAccountDriftFromTransactions:
+    def _stmt(self) -> StatementInfo:
+        return StatementInfo(
+            bank="chase",
+            account_tail="0033",
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 31),
+            beginning_balance=1000.00,
+            ending_balance=1200.00,  # statement net +200
+        )
 
-    def test_chase_newest_by_tail_across_conventions(self):
+    def test_in_period_and_after_close_split(self) -> None:
+        stmt = self._stmt()
+        txns = [
+            (date(2026, 7, 10), 300.00),  # in-period inflow
+            (date(2026, 7, 20), -100.00),  # in-period outflow  -> net +200 in period
+            (date(2026, 8, 5), -50.00),  # after close, backed out of current balance
+        ]
+        # current cleared balance = 1200 (close) - 50 (post-close) = 1150
+        res = account_drift_from_transactions(
+            stmt, txns, current_cleared_balance=1150.00
+        )
+        assert res.statement_net == 200.00
+        assert res.activity_drift == 0.00  # YNAB in-period net (+200) matches statement
+        assert res.balance_drift == 0.00  # 1150 - (-50) = 1200 == statement ending
+        assert res.expected_adjustment == 0.00
+
+    def test_activity_drift_surfaces_in_period_gap(self) -> None:
+        stmt = self._stmt()
+        txns = [
+            (date(2026, 7, 10), 250.00)
+        ]  # YNAB in-period net +250 vs statement +200
+        res = account_drift_from_transactions(
+            stmt, txns, current_cleared_balance=1250.00
+        )
+        assert res.activity_drift == 50.00
+
+
+class TestResolveStatementFile:
+    def test_override_short_circuits(self) -> None:
+        assert (
+            resolve_statement_file("chase", "0033", ["a.pdf"], override="/x/y.pdf")
+            == "/x/y.pdf"
+        )
+
+    def test_chase_newest_by_tail_across_conventions(self) -> None:
         files = [
             "20250131-statements-0033-.pdf",
             "0033 - Checking - Jun 30, 2026.pdf",
@@ -126,15 +174,25 @@ class TestResolveStatementFile:
             "8659 - Savings - Aug 21, 2026.pdf",  # different account
         ]
         # newest 0033 by date is Jun 30 2026
-        assert resolve_statement_file("chase", "0033", files) == "0033 - Checking - Jun 30, 2026.pdf"
+        assert (
+            resolve_statement_file("chase", "0033", files)
+            == "0033 - Checking - Jun 30, 2026.pdf"
+        )
 
-    def test_ally_matches_by_bank_not_tail(self):
+    def test_ally_matches_by_bank_not_tail(self) -> None:
         files = [
             "aug_24_2026_statement.pdf",
             "20251224_Ally.pdf",
             "0033 - Checking - Jun 30, 2026.pdf",  # chase, ignored
         ]
-        assert resolve_statement_file("ally", "5181", files) == "aug_24_2026_statement.pdf"
+        assert (
+            resolve_statement_file("ally", "5181", files) == "aug_24_2026_statement.pdf"
+        )
 
-    def test_no_match_returns_none(self):
-        assert resolve_statement_file("chase", "0033", ["8659 - Savings - Aug 21, 2026.pdf"]) is None
+    def test_no_match_returns_none(self) -> None:
+        assert (
+            resolve_statement_file(
+                "chase", "0033", ["8659 - Savings - Aug 21, 2026.pdf"]
+            )
+            is None
+        )

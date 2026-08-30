@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-30
+- feat: add the `refresh-accounts` skill (#36) — one repeatable ritual that
+  first runs `categorize-unapproved-transactions`, then drives a
+  statement-driven reconcile checklist over every non-closed account so
+  nothing silently drifts (born from a 17-month-unreconciled account that
+  hid a scam check and a pile of phantom transactions). Reconciliation is
+  anchored to bank statement PDFs as the single source of truth — online
+  balances are explicitly distrusted (Chase→YNAB import lag exceeds the
+  balance difference), and an account with no statement is skipped-with-reason
+  rather than reconciled against a live balance. New pure `ynab_mcp.reconcile`
+  module: statement parsing (Chase + Ally) and the anchor-independent
+  monthly-net-diff drift method (statement activity vs YNAB cleared activity),
+  which is immune to the phantom-entry contamination that poisons
+  `current_balance − register`. Adds the read-only
+  `scripts/reconcile_report.py` (parses statements via `pypdf`, guides the
+  user to reconcile in the YNAB app — it never writes). Adds `pypdf` as a
+  dependency.
+
 ## 2026-08-01
 - feat: add retry/backoff for transient YNAB API failures (#17) — a shared
   `call_with_retry` helper (via `tenacity`) wraps every direct YNAB SDK call
