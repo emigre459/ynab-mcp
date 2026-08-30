@@ -74,9 +74,26 @@ piece can still be biased by pre-close phantom entries, so treat them as a guide
 
 Produce a per-account table: `last_reconciled_at`, statement period + closing balance, the
 activity drift, the expected adjustment, and any uncleared/phantom items the user should
-resolve first. For each reconcilable account, tell the user exactly what to do in the YNAB
-app: **open Reconcile, enter the statement's CLOSING balance (not a live online balance),
-mark the through-statement-date transactions cleared, and accept the small adjustment.** The
+resolve first.
+
+Then give the user the **correct** reconcile procedure — and it must account for the fact
+that **YNAB reconciles to a balance you type, comparing it against the account's _current_
+cleared balance, with no date field.** Entering a past statement's closing balance while the
+register already holds post-statement imports would book that later activity as a bogus
+adjustment. So instruct one of these two, never a bare "enter the statement balance and
+accept the adjustment":
+
+- **Preferred — reconcile to _now_, once imports have caught up.** Have the user confirm
+  YNAB's newest transaction matches the bank's newest _posted_ one, then Reconcile to the
+  bank's **Current/posted balance** (never the "Available" balance). With the register
+  complete, there is no past-vs-current gap and the residual is the true drift.
+- **Reconcile to _this_ statement.** In Reconcile, the user first **un-checks (sets to
+  uncleared) every transaction dated _after_ the statement's close date**, so YNAB's cleared
+  balance reflects only through-statement-date; only then enter the statement's **closing
+  balance**. The `expected_adjustment` from the report is valid only under this exclusion.
+
+Either way: the small residual after that is the real adjustment to accept; a large one is a
+flag to investigate (activity_drift points at the culprit period), not to rubber-stamp. The
 skill does not reconcile via API (there is no reconcile endpoint, and auto-writing an
 adjustment off drift math is unsafe) — it guides; the user clicks.
 

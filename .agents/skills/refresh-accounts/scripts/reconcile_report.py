@@ -124,8 +124,11 @@ def main() -> None:
         f"\n{account.name}: statement {statement.period_start}"
         f"..{statement.period_end}, ending ${statement.ending_balance:,.2f}. "
         f"In-period activity drift ${drift.activity_drift:,.2f} (the trustworthy "
-        f"signal). Reconcile in the YNAB app to the statement's closing balance; "
-        f"expect a ~${drift.expected_adjustment:,.2f} adjustment.",
+        f"signal). To reconcile, either wait for imports to catch up and reconcile "
+        f"to the bank's current posted balance, or in Reconcile un-check every "
+        f"transaction dated after {statement.period_end} first, then enter the "
+        f"statement's closing balance. The ~${drift.expected_adjustment:,.2f} "
+        f"expected_adjustment is valid only with that post-close activity excluded.",
         file=sys.stderr,
     )
 

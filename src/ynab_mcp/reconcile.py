@@ -123,14 +123,19 @@ def parse_statement_text(text: str, account_tail: str | None = None) -> Statemen
         statement is ambiguous (multiple accounts, no ``account_tail``), or required
         fields are missing.
     """
-    # Detect by the issuer's website, which appears only in that bank's own header --
-    # NOT by "jpmorgan chase" / "ally bank", which show up in each other's transaction
-    # descriptions (an Ally statement lists a "JPMORGAN CHASE BANK" transfer; a Chase
-    # statement lists an "Ally Bank P2P" deposit).
+    # Detect by which issuer's name dominates. Each bank names itself throughout its own
+    # statement (header + every page footer) but mentions the other at most once, in a
+    # single transaction line (an Ally statement lists one "JPMORGAN CHASE BANK"
+    # transfer; a Chase statement lists one "Ally Bank P2P" deposit) -- so the more
+    # frequent issuer wins. Counting names, rather than testing for a ".com" domain
+    # substring, both avoids the cross-mention trap and sidesteps the URL-substring
+    # anti-pattern.
     lowered = text.lower()
-    if "ally.com" in lowered:
+    ally_hits = lowered.count("ally bank")
+    chase_hits = lowered.count("jpmorgan chase")
+    if ally_hits > chase_hits:
         return _parse_ally(text, account_tail)
-    if "chase.com" in lowered:
+    if chase_hits > ally_hits:
         return _parse_chase(text)
     raise StatementParseError("Unrecognized statement format (neither Chase nor Ally).")
 
@@ -319,10 +324,15 @@ def resolve_statement_file(
     if override is not None:
         return override
 
+    # Match the tail only when it is NOT embedded in a longer digit run -- otherwise a
+    # tail like "0131" would match the date in "20250131-statements-8659-.pdf" and pick
+    # the wrong account's statement.
+    tail_re = re.compile(rf"(?<!\d){re.escape(account_tail)}(?!\d)")
+
     def matches(fn: str) -> bool:
         if bank == "ally":
             return _is_ally_file(fn)
-        return account_tail in fn and not _is_ally_file(fn)
+        return bool(tail_re.search(fn)) and not _is_ally_file(fn)
 
     dated = [
         (d, fn)

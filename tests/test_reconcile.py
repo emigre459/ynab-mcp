@@ -23,10 +23,12 @@ from ynab_mcp.reconcile import (
 
 # Mirrors the REAL Chase pypdf layout: the account number is a standalone line at the
 # top and the "Account Number:" label is left empty (verified against a live statement).
+# The issuer ("JPMorgan Chase Bank") names itself on every page, and mentions the other
+# bank once ("Ally Bank P2P") -- the exact cross-mention that made naive substring
+# detection misfire. The account number recurs while a transaction ref appears once.
 CHASE_TEXT = """\
  000000872910033
 JPMorgan Chase Bank, N.A.
-Chase.com
 January 30, 2026 through February 27, 2026
 Account Number:
 009180241474
@@ -36,13 +38,13 @@ Beginning Balance $3,296.04
 Ending Balance $868.84
 Page 2 of 2
  000000872910033
+JPMorgan Chase Bank, N.A. Member FDIC
 """
 
-# Includes a "JPMORGAN CHASE BANK" transfer line and "Ally Bank" — the exact cross-mention
-# that made naive substring detection classify this Ally statement as Chase.
+# Ally names itself on every page and mentions "JPMORGAN CHASE BANK" once, in a transfer
+# line -- the cross-mention that made naive substring detection call this Chase.
 ALLY_TEXT = """\
 Ally Bank Member FDIC
-www.ally.com
 Money Market Savings
 Account Number: xxxxxx5170 Open Date: 11/02/2024
 Beginning Balance, as of 07/24/2026 $15,348.12
@@ -52,6 +54,7 @@ Spending Account
 Account Number: xxxxxx5181 Open Date: 11/02/2024
 Beginning Balance, as of 07/24/2026 $528.07
 Ending Balance, as of 08/23/2026 $528.11
+Ally Bank Member FDIC
 """
 
 
@@ -206,5 +209,12 @@ class TestResolveStatementFile:
             resolve_statement_file(
                 "chase", "0033", ["8659 - Savings - Aug 21, 2026.pdf"]
             )
+            is None
+        )
+
+    def test_tail_inside_a_date_does_not_false_match(self) -> None:
+        # "0131" appears inside the YYYYMMDD date of the 8659 file; it must NOT be picked.
+        assert (
+            resolve_statement_file("chase", "0131", ["20250131-statements-8659-.pdf"])
             is None
         )
