@@ -87,9 +87,17 @@ def main() -> None:
         )
     ).data.account
     txn_api = ynab.TransactionsApi(client)
+    # since_date is required here: the YNAB API defaults it to "one year ago" when
+    # omitted, which would silently truncate the cleared-transaction history for any
+    # statement period older than that -- corrupting both the in-period sum and the
+    # after-close balance-anchor sum with no error or warning. statement.period_start
+    # covers everything account_drift_from_transactions needs (in-period activity plus
+    # everything after close, up to now).
     transactions = call_with_retry(
         lambda: txn_api.get_transactions_by_account(
-            plan_id=budget_id, account_id=args.account_id
+            plan_id=budget_id,
+            account_id=args.account_id,
+            since_date=statement.period_start,
         )
     ).data.transactions
 
