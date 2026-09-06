@@ -8,11 +8,11 @@ requires-python = ">=3.13.5,<3.14"
 dependencies = [
     "amazon-orders[browser]>=4.4.4",
     "fastmcp>=3.4.4",
-    "pydantic>=2.12",
+    "pydantic>=2.13.5",
     "pypdf>=6.0",
-    "python-dotenv>=1.2",
+    "python-dotenv>=1.2.3",
     "tenacity>=9.1.4",
-    "ynab>=4.2.0",
+    "ynab>=4.4.0",
 ]
 
 [project.scripts]
@@ -29,12 +29,12 @@ module-name = "ynab_mcp"
 dev = [
     "bandit>=1.9.4",
     "black>=26.3.0",
-    "mypy>=1.13.0",
+    "mypy>=2.3.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pytest-mock>=3.15.1",
     "pytest-xdist>=3.6.1",
-    "ruff>=0.15.20",
+    "ruff>=0.16.5",
 ]
 
 [tool.black]
