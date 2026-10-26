@@ -16,7 +16,7 @@ wheels = [
 
 [[package]]
 name = "amazon-orders"
-version = "4.4.4"
+version = "5.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -27,9 +27,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0b/30/06e813a93c8cb37908fe68b7c3eaa8702ed380ea330263948d3ac16e5965/amazon_orders-4.4.4.tar.gz", hash = "sha256:abaffd5d2a2e414e3afd8fa0033b30d35da3c7341a937471382d07ee7558c3e5", size = 60833, upload-time = "2026-07-07T19:26:38.918Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/eb/0ecfc42783474bfaae1eab68c886f1e4bf874d199823c477b16cde457f31/amazon_orders-5.2.0.tar.gz", hash = "sha256:6f7c3fa8b561cd38074a97f9938be3a5f1d2564bbb177eff313d1523c71457d0", size = 112201, upload-time = "2026-10-25T22:10:34.737Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/5d/b19367cec9678655efc7040a6dcf7b5d9fe5e9e2acbe863a48ded9f33c22/amazon_orders-4.4.4-py3-none-any.whl", hash = "sha256:61217d3dd4ede06a60cd60918bc99dccfccdc7a020727b338b59822ffd03d61b", size = 63090, upload-time = "2026-07-07T19:26:37.728Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/94/afe7b7ce5b9a5ba746bb45725aaeee35a5634c3a102c552b63d344b842b1/amazon_orders-5.2.0-py3-none-any.whl", hash = "sha256:a0c806089931d3b5cea2ebaeba723708c58fcbac75ba251c904d9d625bcb4950", size = 117822, upload-time = "2026-10-25T22:10:33.208Z" },
 ]
 
 [package.optional-dependencies]
@@ -1557,7 +1557,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "amazon-orders", extras = ["browser"], specifier = ">=4.4.4" },
+    { name = "amazon-orders", extras = ["browser"], specifier = ">=5.2.0" },
     { name = "fastmcp", specifier = ">=3.4.10,<4" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pypdf", specifier = ">=6.21.2" },

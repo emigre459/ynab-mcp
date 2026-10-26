@@ -31,7 +31,7 @@ def _is_amazon_like_payee(payee_name: str | None) -> bool:
 
 def _is_whole_foods_transaction(transaction: Transaction) -> bool:
     """Return whether an Amazon transaction is a Whole Foods charge."""
-    return _WHOLE_FOODS_MARKER in transaction.seller.lower()
+    return _WHOLE_FOODS_MARKER in (transaction.seller or "").lower()
 
 
 def _amount_to_milliunits(grand_total: float) -> int:
@@ -62,7 +62,7 @@ def _lookback_days(since_date: date | None, date_window_days: int) -> int:
 
 def _build_reasoning(
     classification: str,
-    order_number: str,
+    order_number: str | None,
     order: Order | None,
     date_window_days: int,
     same_day: bool,
