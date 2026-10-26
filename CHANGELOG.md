@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-26
+- deps: upgrade to FastMCP 4 / MCP Python SDK v2 (#43) — `fastmcp>=4.1.4,<5`
+  (4.1.4, bringing `mcp` 2.3.0 transitively), lifting the `<4` cap #46 added
+  to hold the major bump. No source changes were needed: the upgrade guide's
+  audit found nothing to fix. The server now negotiates MCP's modern
+  `2026-07-28` protocol revision per connection while still serving
+  handshake-era (≤ `2025-11-25`) hosts; the stdio e2e smoke test runs on both
+  eras. pytest now fails on any `FastMCPDeprecationWarning`. FastMCP's HTTP
+  stack moved from `httpx` to `httpx2`, so `httpx` (unused by this repo) and
+  `keyring` drop out of the lock.
+
 ## 2026-08-30
 - feat: add the `refresh-accounts` skill (#36) — one repeatable ritual that
   first runs `categorize-unapproved-transactions`, then drives a
