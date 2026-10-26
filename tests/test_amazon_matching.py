@@ -3,6 +3,7 @@
 from datetime import date
 
 from ynab_mcp.amazon_matching import (
+    DEFAULT_DATE_WINDOW_DAYS,
     AmazonCandidate,
     YnabCandidate,
     match_transactions,
@@ -49,6 +50,28 @@ def test_date_outside_window_is_no_match() -> None:
 
     assert result.matches == []
     assert result.unmatched == ["y1"]
+
+
+def test_default_window_covers_five_day_bank_posting_lag() -> None:
+    """The default window matches a charge posted 5 days after the order.
+
+    Real Chase data: an order completed 10/09 posted to YNAB on 10/13
+    (weekend + bank lag), which the old 3-day default missed.
+    """
+    ynab_txns = [
+        YnabCandidate("y1", -6820, date(2026, 10, 14)),
+        YnabCandidate("y2", -7000, date(2026, 10, 16)),
+    ]
+    amazon_txns = [
+        AmazonCandidate("a1:0", "111-4444444", -6820, date(2026, 10, 9)),
+        AmazonCandidate("a2:0", "111-5555555", -7000, date(2026, 10, 10)),
+    ]
+
+    result = match_transactions(ynab_txns, amazon_txns)
+
+    assert DEFAULT_DATE_WINDOW_DAYS == 5
+    assert [m.ynab_transaction_id for m in result.matches] == ["y1"]
+    assert result.unmatched == ["y2"]
 
 
 def test_split_shipment_groups_multiple_legs_of_one_order() -> None:
