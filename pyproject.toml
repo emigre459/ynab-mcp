@@ -66,6 +66,7 @@ convention = "numpy"
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-n auto -m 'not e2e and not integration'"
+filterwarnings = ["error::fastmcp.exceptions.FastMCPDeprecationWarning"]
 markers = [
     "integration: marks tests that call live external APIs",
     "e2e: marks tests that exercise the full pipeline against live services",
