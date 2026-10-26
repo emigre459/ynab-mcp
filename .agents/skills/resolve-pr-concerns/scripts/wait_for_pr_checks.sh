@@ -11,16 +11,16 @@
 #   - Polls every 30s (default; configurable).
 #   - Considers a check "settled" when its bucket is one of:
 #       pass / fail / cancel / skipping
-#   - Cursor Bugbot et al. don't always run on every push; if the only
-#     remaining "pending" checks are external bot reviews (e.g. "Cursor Bugbot")
+#   - External bot reviewers (e.g. Copilot) don't always run on every push; if
+#     the only remaining "pending" checks are external bot reviews
 #     and we've waited longer than --bot-window-sec since the last push, we
 #     stop waiting on them and report them as "no-review" (still surfaced
 #     so the user can decide to re-trigger or proceed).
 #   - Expected external bots may take time to *register* a check after a
 #     push (gh pr checks won't even list them until they boot up). Pass
 #     --expected-bot NAME (repeatable) to keep the soft-wait window open
-#     for bots that haven't appeared in the check list yet. Default
-#     expected list is "Cursor Bugbot".
+#     for bots that haven't appeared in the check list yet. The default
+#     expected list is empty (Cursor Bugbot is no longer active on this repo).
 #   - Exit codes:
 #       0 — all required checks passed
 #       1 — one or more checks failed (or cancelled)
@@ -55,12 +55,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Default expected-bots list: Cursor Bugbot (the only async reviewer this
-# skill actively triggers via `bugbot run`). Override or extend with
-# --expected-bot.
-if [[ ${#EXPECTED_BOTS[@]} -eq 0 ]]; then
-  EXPECTED_BOTS=("Cursor Bugbot")
-fi
+# Default expected-bots list is empty: Cursor Bugbot is no longer active on this
+# repo, so nothing is expected to register a check. Pass --expected-bot NAME
+# (repeatable) to wait for a specific bot.
 
 if [[ -z "$PR" ]]; then
   echo "usage: $0 <pr-number> [<owner>/<repo>] [--timeout-min N] [--bot-window-sec S]" >&2
@@ -161,13 +158,15 @@ for bot in "${EXPECTED_BOTS[@]}"; do
   fi
 done
 
-# Bugbot reports findings as REVIEW COMMENTS, not a failing check (its check goes
+# Bugbot (when active) reports findings as REVIEW COMMENTS, not a failing check (its check goes
 # to "skipping" even when it left findings), and the review comment can land a few
 # seconds AFTER the check settles. So once checks are green, give Bugbot a short
 # window to post its review of the HEAD commit, then surface any UNRESOLVED findings.
 # We use the GraphQL reviewThreads `isResolved` flag as the source of truth — NOT a
 # comment's `commit_id` (GitHub re-points resolved comments' commit_id to HEAD too,
 # which would over-report already-resolved threads). (Needs a repo arg for owner/repo.)
+# The Bugbot settle-wait below only runs when a bot is expected; the unresolved-
+# thread report (human reviewers too) always runs.
 if [[ -n "$REPO" ]]; then
   owner="${REPO%%/*}"
   name="${REPO##*/}"
@@ -181,7 +180,9 @@ if [[ -n "$REPO" ]]; then
   # (count stable across one interval) so late-landing inline findings aren't missed.
   prev_count=-1
   settled=0
-  for _ in $(seq 1 12); do  # up to ~3min
+  settle_iters=0
+  [[ ${#EXPECTED_BOTS[@]} -gt 0 ]] && settle_iters=12
+  for ((i = 0; i < settle_iters; i++)); do  # up to ~3min; zero iterations when no bot expected
     reviewed=$(gh pr view "$PR" "${repo_arg[@]}" --json reviews \
       --jq "[.reviews[] | select(.author.login==\"cursor\") | select(.body|test(\"for commit $short\"))] | length" 2>/dev/null || echo 0)
     count=$(unresolved_count)
@@ -192,7 +193,7 @@ if [[ -n "$REPO" ]]; then
     prev_count="${count:-0}"
     sleep 15
   done
-  [[ "$settled" -eq 0 ]] && echo "  (note: Bugbot review may still be settling — re-check if it just landed)" >&2
+  [[ "$settle_iters" -gt 0 && "$settled" -eq 0 ]] && echo "  (note: Bugbot review may still be settling — re-check if it just landed)" >&2
   echo "UNRESOLVED REVIEW FINDINGS:"
   # Capture stdout and the gh exit code SEPARATELY so a failed query (network/auth)
   # is reported as an error — never silently read as "none unresolved", which on a

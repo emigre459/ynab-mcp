@@ -23,7 +23,7 @@ This skill exists because PRs accumulate signal from multiple sources (bots, hum
 - Cursor Bugbot / Copilot / dependabot / renovate enumeration commands
 - Loop guards (iteration counter, fingerprint-based oscillation detection)
 - CI-failure triage: OIDC App-token / `pull_request_target` workflow trap, fork-secrets unavailability, flaky external API treatment
-- `bugbot run` re-trigger as the closing step, when Bugbot is installed and enabled on the repo (see Step 1a/1b for detection and the no-bot fallback)
+- Fresh-review step after fixes — Cursor Bugbot is no longer active on this repo, so there is no `bugbot run` re-trigger (see Step 1a/1b/5)
 - `wait_for_pr_checks.sh` orchestration with terminal-state polling
 - Final user-facing status summary
 
@@ -74,7 +74,6 @@ digraph resolve_pr_concerns {
     "Same fingerprints as last pass?" [shape=diamond];
     "Oscillation — surface to user" [shape=doublecircle];
     "Concerns?" [shape=diamond];
-    "Comment 'bugbot run' on PR" [shape=box];
     "Wait for checks (wait_for_pr_checks.sh)" [shape=box];
     "Status summary (verification-before-completion)" [shape=doublecircle];
     "Classify each concern\n(superpowers:receiving-code-review)" [shape=box];
@@ -98,8 +97,8 @@ digraph resolve_pr_concerns {
     "Enumerate concerns" -> "Fingerprint concerns" -> "Same fingerprints as last pass?";
     "Same fingerprints as last pass?" -> "Oscillation — surface to user" [label="yes"];
     "Same fingerprints as last pass?" -> "Concerns?" [label="no"];
-    "Concerns?" -> "Comment 'bugbot run' on PR" [label="none"];
-    "Comment 'bugbot run' on PR" -> "Wait for checks (wait_for_pr_checks.sh)" -> "Status summary (verification-before-completion)";
+    "Concerns?" -> "Wait for checks (wait_for_pr_checks.sh)" [label="none"];
+    "Wait for checks (wait_for_pr_checks.sh)" -> "Status summary (verification-before-completion)";
     "Concerns?" -> "Classify each concern\n(superpowers:receiving-code-review)" [label="some"];
     "Classify each concern\n(superpowers:receiving-code-review)" -> "Parallel-mode gate: 2-4 simple,\ndir-disjoint, bounded, no rearch?";
     "Parallel-mode gate: 2-4 simple,\ndir-disjoint, bounded, no rearch?" -> "AskUserQuestion: parallel?" [label="yes"];
@@ -125,30 +124,13 @@ If no PR is open, stop — nothing to do.
 
 If multiple PRs are open from this branch (rare): work the most recently updated one and tell the user.
 
-### Step 1a. Detect Bugbot trigger mode — decide whether `bugbot run` comments are needed
+### Step 1a. Cursor Bugbot is not active — never trigger or wait for it
 
-Cursor Bugbot's trigger mode is a per-repo Cursor setting: **auto-on-push** (reviews every push automatically) or **manual** (reviews only on a `bugbot run` / `cursor review` comment). When auto-on-push is enabled, commenting `bugbot run` after each push is a **redundant double-trigger** — skip it.
-
-At PR start, determine the mode once and **flag it for the session** (e.g. note `BUGBOT_AUTORUN=enabled|manual|absent`):
-
-```bash
-# Is a "Cursor Bugbot" check present on the PR, and did the latest push get a
-# review without a `bugbot run` comment triggering it?
-gh pr checks <num> --repo <owner>/<repo> --json name,bucket | jq -r '.[] | select(.name|test("Cursor Bugbot")) | .name + " " + .bucket'
-gh pr view <num> --repo <owner>/<repo> --json reviews \
-  --jq '[.reviews[] | select(.author.login=="cursor")] | last | (.body|capture("for commit (?<c>[0-9a-f]{7})").c)'
-gh api repos/<owner>/<repo>/issues/<num>/comments --jq '[.[] | select(.body|test("^bugbot run"))] | length'
-```
-
-- If a `Cursor Bugbot` check exists / a recent push got a `cursor` review whose commit was **not** preceded by a `bugbot run` comment → **auto-on-push** → set `BUGBOT_AUTORUN=enabled` and **skip** the explicit `bugbot run` step (Step 5) for the rest of the session; after each push, just wait for the auto-review.
-- If Bugbot reviews only ever appear right after a `bugbot run` comment → **manual** → keep using `bugbot run`.
-- If no `Cursor Bugbot` check ever appears and no review lands → Bugbot may not be installed/enabled (see Step 1b).
-
-Surface the detected mode to the user in one line ("Bugbot auto-runs on push here — I won't post redundant `bugbot run` comments").
+Cursor Bugbot is no longer installed/enabled on this repo (see `.agents/rules/shared/bugbot-inactive.md`). Do **not** comment `bugbot run` / `cursor review`, and do not treat a missing Bugbot check or review as a problem. Other reviewers (human, Copilot if enabled) and dependabot/renovate are still enumerated in Step 2. If Bugbot is ever re-enabled, restore trigger-mode detection here and in Step 5 (see git history for the prior text).
 
 ### Step 1b (optional). Pre-pass code review when no bots are configured
 
-If the repo has no automated PR reviewers configured (no Cursor Bugbot, no Copilot review, no equivalent), invoke `superpowers:requesting-code-review` to dispatch a fresh reviewer subagent against the PR's SHA range before enumerating. Detect this per repo — don't assume bot review is configured; a freshly bootstrapped repo typically has none until Bugbot/Copilot are explicitly installed and enabled.
+If the repo has no automated PR reviewers configured (no Copilot review or equivalent; Cursor Bugbot is inactive here), invoke `superpowers:requesting-code-review` to dispatch a fresh reviewer subagent against the PR's SHA range before enumerating. Detect this per repo — don't assume bot review is configured; this repo has no active bot reviewer, so this pre-pass is the default.
 
 ## Step 2: Enumerate concerns
 
@@ -321,16 +303,7 @@ After all serial fixes land, run `make pr_check` once more on the full set, then
 
 ## Step 5: Ensure a fresh review of the latest commit
 
-After all concerns are resolved and pushed, Cursor Bugbot must re-review the latest commit — silently relying on the previous review is unsafe; new fixes can introduce new issues. **How** depends on the trigger mode detected in Step 1a:
-
-- **`BUGBOT_AUTORUN=enabled` (auto-on-push):** the push you just made already triggered a fresh review. **Do NOT comment `bugbot run`** — it's a redundant double-trigger. Just proceed to Step 6 and wait for the auto-review to land.
-- **`BUGBOT_AUTORUN=manual`:** comment `bugbot run` so Bugbot re-reviews against the latest commit:
-
-  ```bash
-  gh pr comment <num> --repo <owner>/<repo> --body "bugbot run"
-  ```
-
-- **`BUGBOT_AUTORUN=absent`** (no Bugbot installed/enabled): there's nothing to re-trigger; rely on the Step 1b pre-pass review instead, and tell the user Bugbot isn't enabled on the repo.
+After all concerns are resolved and pushed, the latest commit needs a fresh review — new fixes can introduce new issues. Cursor Bugbot is inactive here, so there is nothing to re-trigger: re-run the Step 1b pre-pass (`superpowers:requesting-code-review`) against the new SHA range when the fixes were non-trivial, and tell the user no bot re-review will occur. Never comment `bugbot run`.
 
 ## Step 6: Wait for every check to settle
 
@@ -340,7 +313,7 @@ A PR isn't done while CI or bot reviews are still pending. Use the bundled helpe
 bash <skill-dir>/scripts/wait_for_pr_checks.sh <pr-number> <owner>/<repo>
 ```
 
-It polls `gh pr checks` until every required check has reached a terminal state (pass / fail / cancel / skipping). External bot reviews (Cursor Bugbot, Copilot, etc.) are treated as "soft pending" — the helper waits up to ten minutes for them, then surfaces them as `no-review` rather than blocking forever. Exit codes:
+It polls `gh pr checks` until every required check has reached a terminal state (pass / fail / cancel / skipping). External bot reviews (Copilot, etc.) are treated as "soft pending" — the helper waits up to ten minutes for them, then surfaces them as `no-review` rather than blocking forever. Exit codes:
 
 - `0` — all required checks passed; the PR is mergeable from a CI standpoint.
 - `1` — one or more checks failed/cancelled; loop back to Step 2 and treat the failure as a new concern.
@@ -360,7 +333,7 @@ gh pr checks <num> --repo <owner>/<repo>
 End with a short status summary:
 - What was addressed (one bullet per concern, with the source — bugbot/reviewer/dependabot — and whether it was fixed, pushed back on, or closed as YAGNI).
 - What's still outstanding (if anything).
-- Whether `bugbot run` was triggered and what to expect next.
+- Whether a fresh pre-pass review was run on the latest commit and what to expect next (no Bugbot).
 - Current `mergeStateStatus` from the fresh `gh pr view` call. **Never call a PR merge-ready while `mergeStateStatus` is `BEHIND`** — that's an unresolved gating concern (Step 2f), not a footnote. "Green checks but behind base" means CI verified stale code; update the branch and re-verify first.
 
 ## Red flags — stop and reassess
@@ -382,7 +355,7 @@ End with a short status summary:
 |---------|-----|
 | Treating every concern as simple → aggressive auto-fixes diverging from user intent | Default to AskUserQuestion when there's any judgment involved; apply `superpowers:receiving-code-review` discipline first |
 | Implementing reviewer suggestions without verifying they're correct for the codebase | Wrap every concern in `superpowers:receiving-code-review`'s verify-before-implement pass — including the "simple" ones |
-| Skipping `bugbot run` re-trigger after fixes, when Bugbot is actually enabled in manual mode | It's the last step in that case — never skip; new code → new review |
+| Commenting `bugbot run` or waiting for a Bugbot review | Bugbot is inactive on this repo — it will never respond; use the Step 1b pre-pass instead |
 | Folding in a major-version dependency bump without checking the diff | Always run `gh pr diff` before applying a dep PR locally |
 | Treating a red CI check as "noise" without reading the log | Run `gh run view --log-failed` on every failure; classify infra vs code; fix or escalate |
 | Bumping a workflow file that uses OIDC → App token (claude-code-review, claude) inside a PR | Revert that workflow change from the PR; ask the user to land it on the default branch directly |

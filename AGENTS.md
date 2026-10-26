@@ -22,6 +22,7 @@ Each rule is a Markdown file with frontmatter:
 |------|-----------|---------|
 | `.agents/rules/shared/push-every-commit.md` | always | Push to origin after EVERY commit (`-u` on the first) — the remote branch is the in-flight signal build-from-issue Step 0/11b and parallel sessions read |
 | `.agents/rules/shared/pr-only-to-main.md` | always | `main` only takes squash-merged PRs, never a local merge — build-from-issue Step 11 points here when `finishing-a-development-branch`'s generic menu offers "merge locally" |
+| `.agents/rules/shared/bugbot-inactive.md` | always | Cursor Bugbot is no longer active — never comment `bugbot run`, never wait for a Bugbot check/review; use `requesting-code-review` instead |
 | `.agents/rules/shared/*.md` | always / varies | Git, commit, issue-workflow, and meta conventions — read the directory |
 | `.agents/rules/python/uv-python.md` | always | Use `uv` for all Python execution and dependency management |
 | `.agents/rules/python/python-best-practices.md` | `**/*.py` | Style, type hints, TDD, API design, docstrings |

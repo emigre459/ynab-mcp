@@ -1,5 +1,8 @@
 # Cursor Bugbot — Noise Filters
 
+> **Inactive:** Bugbot is no longer enabled on this repo (see
+> `.agents/rules/shared/bugbot-inactive.md`). Kept in case it is re-enabled.
+
 This file lists categories of findings we explicitly do **not** want from Cursor
 Bugbot on PRs in this repo. Bugbot is valuable for catching real bugs — the goal
 here isn't to silence it, it's to keep the signal-to-noise ratio high so reviewers
