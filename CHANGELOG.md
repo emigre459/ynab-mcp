@@ -1,6 +1,12 @@
 # Changelog
 
 ## 2026-10-26
+- dev: adopt MCP Inspector v2 for local dev (#44) — `make inspect` launches
+  the `@modelcontextprotocol/inspector@latest` web UI against
+  `uv run ynab-mcp`; `make inspect-cli` runs a browser-free `tools/list`
+  smoke check. Both pass `--protocol-era modern`, since Inspector v2 defaults
+  ad-hoc stdio servers to the legacy `2025-11-25` handshake; override with
+  `INSPECTOR_ERA=legacy`. README and live-test-kit docs now use the targets.
 - deps: upgrade to FastMCP 4 / MCP Python SDK v2 (#43) — `fastmcp>=4.1.4,<5`
   (4.1.4, bringing `mcp` 2.3.0 transitively), lifting the `<4` cap #46 added
   to hold the major bump. No source changes were needed: the upgrade guide's
