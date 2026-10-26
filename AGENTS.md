@@ -37,7 +37,13 @@ tests in `tests/`. All quality gates run through the `Makefile`.
 
 ### Architecture: `src/ynab_mcp/`
 
-A FastMCP v3 stdio server wrapping the official `ynab` PyPI client. Layout,
+A FastMCP v4 (MCP Python SDK v2) stdio server wrapping the official `ynab`
+PyPI client (upgraded from v3 in issue #43). It serves both MCP protocol eras,
+negotiated per connection — the modern `2026-07-28` revision and the handshake
+era (≤ `2025-11-25`) that older hosts still speak; `tests/test_e2e_server.py`
+pins both. `pyproject.toml`'s pytest config turns any
+`FastMCPDeprecationWarning` into a test failure, so code can't silently lean
+on a deprecated/bridged FastMCP surface (e.g. camelCase `isError` reads). Layout,
 established in issue #11 and extended by every later epic-#10 child that adds
 tools:
 
