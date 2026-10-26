@@ -33,8 +33,8 @@ def test_build_amazon_session_passes_credentials_and_never_logs_in(
         otp_secret_key="otp-secret",
         config=config_cls.return_value,
     )
-    assert session is session_cls.return_value
     session_cls.return_value.login.assert_not_called()
+    assert session is session_cls.return_value
 
 
 def test_build_amazon_session_registers_browser_challenge_solvers(

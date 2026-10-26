@@ -34,7 +34,7 @@ def _amazon_txn(
     order_number: str,
     grand_total: float,
     completed_date: date,
-    seller: str = "Amazon.com",
+    seller: str | None = "Amazon.com",
     is_refund: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -117,6 +117,31 @@ def test_find_amazon_transactions_excludes_refunds_and_whole_foods(
     assert result["matches"] == []
     assert result["unmatched"][0]["ynab_transaction"]["id"] == "y1"  # type: ignore[index]
     amazon_orders_client.get_order.assert_not_called()
+
+
+def test_find_amazon_transactions_matches_transaction_without_seller(
+    mocker: MockerFixture,
+) -> None:
+    """A seller-less Amazon transaction (``seller=None``) is still matchable."""
+    ynab_client = mocker.Mock()
+    list_transactions = mocker.patch(
+        "ynab_mcp.tools.find_amazon_transactions.list_transactions"
+    )
+    list_transactions.return_value = [
+        _ynab_txn(mocker, "y1", -5000, date(2026, 6, 1), "Amazon.com"),
+    ]
+    amazon_transactions_client = mocker.Mock()
+    amazon_transactions_client.get_transactions.return_value = [
+        _amazon_txn("111-1111111", -5.00, date(2026, 6, 1), seller=None),
+    ]
+    amazon_orders_client = mocker.Mock()
+    amazon_orders_client.get_order.return_value = _order(["Widget"])
+
+    result = find_amazon_transactions(
+        ynab_client, amazon_transactions_client, amazon_orders_client, "budget-1"
+    )
+
+    assert result["matches"][0]["order_number"] == "111-1111111"  # type: ignore[index]
 
 
 def test_find_amazon_transactions_ignores_non_amazon_payees(
