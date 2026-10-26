@@ -7,27 +7,39 @@ from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 
 
-async def _list_tool_names(transport: StdioTransport) -> set[str]:
-    """List every tool name the real stdio subprocess exposes.
+async def _list_tools_and_protocol(
+    transport: StdioTransport, mode: str
+) -> tuple[set[str], str | None]:
+    """List every tool name, and the negotiated protocol version, over stdio.
 
     Parameters
     ----------
     transport : fastmcp.client.transports.StdioTransport
         A transport for the real `uv run ynab-mcp` subprocess.
+    mode : str
+        The ``fastmcp.Client`` connect mode: ``"auto"`` negotiates the modern
+        ``2026-07-28`` protocol era, ``"legacy"`` pins the handshake era.
 
     Returns
     -------
-    set[str]
-        Every registered tool's name.
+    tuple[set[str], str | None]
+        Every registered tool's name, and the protocol version the
+        connection negotiated.
     """
-    async with Client(transport) as client:
+    async with Client(transport, mode=mode) as client:
         tools = await client.list_tools()
-        return {tool.name for tool in tools}
+        return {tool.name for tool in tools}, client.protocol_version
 
 
 @pytest.mark.e2e
-def test_uv_run_ynab_mcp_stdio_server_lists_expected_tools() -> None:
-    """The real stdio subprocess launches and lists all 14 tools.
+@pytest.mark.parametrize(
+    ("mode", "expected_protocol"),
+    [("auto", "2026-07-28"), ("legacy", "2025-11-25")],
+)
+def test_uv_run_ynab_mcp_stdio_server_lists_expected_tools(
+    mode: str, expected_protocol: str
+) -> None:
+    """The real stdio subprocess lists all 14 tools on both protocol eras.
 
     7 read-only + 4 write + 3 analysis tools. Uses a dummy YNAB_PAT: listing tools never calls the YNAB API, so no
     live credentials are needed for this smoke check. YNAB_DEFAULT_BUDGET_ID
@@ -35,6 +47,10 @@ def test_uv_run_ynab_mcp_stdio_server_lists_expected_tools() -> None:
     (which may set a real default budget or Amazon credentials) can't change
     the expected tool set -- load_dotenv() never overrides an already-set
     environment variable, even an empty one.
+
+    Parametrized over both MCP protocol eras: ``auto`` negotiates the modern
+    ``2026-07-28`` revision, ``legacy`` the handshake era that MCP hosts
+    without modern support still speak -- the server must serve both.
     """
     transport = StdioTransport(
         command="uv",
@@ -47,8 +63,9 @@ def test_uv_run_ynab_mcp_stdio_server_lists_expected_tools() -> None:
         },
     )
 
-    tool_names = asyncio.run(_list_tool_names(transport))
+    tool_names, protocol = asyncio.run(_list_tools_and_protocol(transport, mode))
 
+    assert protocol == expected_protocol
     assert tool_names == {
         "list-budgets",
         "list-accounts",
