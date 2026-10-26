@@ -10,7 +10,12 @@ from amazonorders.orders import AmazonOrders
 from amazonorders.transactions import AmazonTransactions
 from fastmcp import FastMCP
 
-from ynab_mcp.amazon_matching import AmazonCandidate, YnabCandidate, match_transactions
+from ynab_mcp.amazon_matching import (
+    DEFAULT_DATE_WINDOW_DAYS,
+    AmazonCandidate,
+    YnabCandidate,
+    match_transactions,
+)
 from ynab_mcp.client import resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_amazon_exception
@@ -105,7 +110,7 @@ def find_amazon_transactions(
     budget_id: str,
     since_date: date | None = None,
     until_date: date | None = None,
-    date_window_days: int = 3,
+    date_window_days: int = DEFAULT_DATE_WINDOW_DAYS,
     include_approved: bool = False,
 ) -> dict[str, object]:
     """Match YNAB transactions against Amazon order/transaction history.
@@ -129,7 +134,7 @@ def find_amazon_transactions(
         ``None``.
     date_window_days : int, optional
         Maximum number of days apart a YNAB and Amazon date may be and
-        still count as a match, by default ``3``.
+        still count as a match, by default ``5``.
     include_approved : bool, optional
         Whether to consider YNAB transactions already marked ``approved``,
         by default ``False``. ``approved`` means a human confirmed the
@@ -306,7 +311,7 @@ def register(
         budget_id: str | None = None,
         since_date: date | None = None,
         until_date: date | None = None,
-        date_window_days: int = 3,
+        date_window_days: int = DEFAULT_DATE_WINDOW_DAYS,
         include_approved: bool = False,
     ) -> dict[str, object]:
         """Match YNAB transactions against Amazon order/transaction history.
@@ -327,7 +332,7 @@ def register(
             default ``None``.
         date_window_days : int, optional
             Maximum number of days apart a YNAB and Amazon date may be and
-            still count as a match, by default ``3``.
+            still count as a match, by default ``5``.
         include_approved : bool, optional
             Whether to consider YNAB transactions already marked
             ``approved`` (already reviewed by a human in YNAB), by default
