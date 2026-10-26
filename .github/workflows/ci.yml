@@ -16,7 +16,7 @@ jobs:
       - name: Read Python version
         id: pyver
         run: echo "value=$(cat .python-version)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ steps.pyver.outputs.value }}
       - uses: astral-sh/setup-uv@v7
@@ -33,7 +33,7 @@ jobs:
       - name: Read Python version
         id: pyver
         run: echo "value=$(cat .python-version)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ steps.pyver.outputs.value }}
       - uses: astral-sh/setup-uv@v7
@@ -50,7 +50,7 @@ jobs:
       - name: Read Python version
         id: pyver
         run: echo "value=$(cat .python-version)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ steps.pyver.outputs.value }}
       - uses: astral-sh/setup-uv@v7
