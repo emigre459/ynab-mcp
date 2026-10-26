@@ -45,7 +45,11 @@ data, not an error.
 For a browser-free smoke check, `make inspect-cli` runs the Inspector's CLI
 mode (`--cli --method tools/list`) and prints the tool list as JSON. Both
 targets use `@modelcontextprotocol/inspector@latest` so a stale cached v1
-isn't picked up.
+isn't picked up, and pass `--protocol-era modern` so the Inspector negotiates
+the `2026-07-28` protocol (Inspector v2 otherwise defaults ad-hoc servers to
+the legacy `2025-11-25` handshake). The connected server card should read
+**MCP 2026-07-28**. To exercise the legacy era instead, run
+`make inspect INSPECTOR_ERA=legacy`.
 
 ## Tools
 

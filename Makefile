@@ -31,13 +31,19 @@ integration: ## Run integration tests (real SDK/HTTP stack against a local mock 
 run: ## Run the YNAB MCP stdio server (reads .env for your real YNAB_PAT)
 	@uv run ynab-mcp
 
+# Inspector v2 defaults ad-hoc stdio targets to the legacy (<= 2025-11-25)
+# handshake era; force the modern 2026-07-28 era. Override with
+# `make inspect INSPECTOR_ERA=legacy` (or `auto`) to exercise the old era.
+INSPECTOR := npx -y @modelcontextprotocol/inspector@latest
+INSPECTOR_ERA ?= modern
+
 .PHONY: inspect
-inspect: ## Launch MCP Inspector v2 web UI against the stdio server
-	@npx @modelcontextprotocol/inspector@latest uv run ynab-mcp
+inspect: ## Launch MCP Inspector v2 web UI against the stdio server (2026-07-28 era)
+	@$(INSPECTOR) --protocol-era $(INSPECTOR_ERA) uv run ynab-mcp
 
 .PHONY: inspect-cli
-inspect-cli: ## Browser-free smoke check: list tools via Inspector v2 CLI
-	@npx @modelcontextprotocol/inspector@latest --cli uv run ynab-mcp --method tools/list
+inspect-cli: ## Browser-free smoke check: list tools via Inspector v2 CLI (2026-07-28 era)
+	@$(INSPECTOR) --cli --protocol-era $(INSPECTOR_ERA) uv run ynab-mcp --method tools/list
 
 .PHONY: coverage
 coverage: ## pytest with coverage + 80% gate
