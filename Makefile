@@ -31,6 +31,14 @@ integration: ## Run integration tests (real SDK/HTTP stack against a local mock 
 run: ## Run the YNAB MCP stdio server (reads .env for your real YNAB_PAT)
 	@uv run ynab-mcp
 
+.PHONY: inspect
+inspect: ## Launch MCP Inspector v2 web UI against the stdio server
+	@npx @modelcontextprotocol/inspector@latest uv run ynab-mcp
+
+.PHONY: inspect-cli
+inspect-cli: ## Browser-free smoke check: list tools via Inspector v2 CLI
+	@npx @modelcontextprotocol/inspector@latest --cli uv run ynab-mcp --method tools/list
+
 .PHONY: coverage
 coverage: ## pytest with coverage + 80% gate
 	@uv run pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=80

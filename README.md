@@ -33,7 +33,7 @@ This starts the MCP server over stdio. To exercise it with
 [MCP Inspector](https://github.com/modelcontextprotocol/inspector):
 
 ```bash
-npx @modelcontextprotocol/inspector uv run ynab-mcp
+make inspect
 ```
 
 In the Inspector UI: click **Connect**, then **List Tools** — you should
@@ -41,6 +41,11 @@ see all 10 tools listed in [Tools](#tools) below (or 9, with `list-budgets`
 hidden, if you set `YNAB_DEFAULT_BUDGET_ID`). Run `list-budgets` (or
 `list-accounts` with a `budget_id`) and confirm it returns your real YNAB
 data, not an error.
+
+For a browser-free smoke check, `make inspect-cli` runs the Inspector's CLI
+mode (`--cli --method tools/list`) and prints the tool list as JSON. Both
+targets use `@modelcontextprotocol/inspector@latest` so a stale cached v1
+isn't picked up.
 
 ## Tools
 

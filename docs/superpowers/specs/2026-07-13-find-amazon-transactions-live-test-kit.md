@@ -25,7 +25,7 @@ This may prompt interactively (password confirmation, a CAPTCHA, an SMS/app 2FA 
 ## 3. Start the server and connect MCP Inspector
 
 ```bash
-npx @modelcontextprotocol/inspector uv run ynab-mcp
+make inspect
 ```
 
 This opens a browser UI. Click **Connect**, then **List Tools** — confirm `find-amazon-transactions` appears in the list alongside the other 7 read-only tools.
