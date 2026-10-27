@@ -199,6 +199,8 @@ Every change must pass `make pr_check` (lint + tests) before a PR is opened.
 | `make e2e` | E2E tests (spawns the real `uv run ynab-mcp` stdio subprocess) |
 | `make integration` | Integration tests (real `ynab` SDK/HTTP stack against a local mock server, no live YNAB) |
 | `make run` | Run the YNAB MCP stdio server (needs a real `YNAB_PAT` in `.env`) |
+| `make inspect` | Launch MCP Inspector v2 web UI against the stdio server |
+| `make inspect-cli` | Inspector v2 CLI `tools/list` smoke check (no browser) |
 | `make coverage` | Tests with an 80% coverage gate |
 | `make security` | Dependency / SAST scan |
 | `make pr_check` | `lint` + `tests` |
