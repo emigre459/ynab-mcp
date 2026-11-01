@@ -1493,7 +1493,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.21.2" },
     { name = "python-dotenv", specifier = ">=1.2" },
     { name = "tenacity", specifier = ">=9.1.4" },
-    { name = "ynab", specifier = ">=4.2.0" },
+    { name = "ynab", specifier = ">=4.3.0" },
 ]
 
 [package.metadata.requires-dev]

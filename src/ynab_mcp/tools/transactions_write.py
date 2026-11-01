@@ -173,14 +173,8 @@ def bulk_manage_transactions(
     update_indices = [i for i, op in enumerate(operations) if op["action"] == "update"]
     if update_indices:
         try:
-            # The installed ynab SDK (v4.2.0) maps this endpoint's success
-            # response to HTTP status '209' instead of the '200' YNAB
-            # actually returns, so update_transactions()'s built-in
-            # deserialization silently yields None on a real success.
-            # Parsing raw_data directly with the response model sidesteps
-            # that broken status-code map.
-            http_response = call_with_retry(
-                lambda: api.update_transactions_with_http_info(
+            response = call_with_retry(
+                lambda: api.update_transactions(
                     plan_id=budget_id,
                     data=ynab.PatchTransactionsWrapper(
                         transactions=[
@@ -189,9 +183,6 @@ def bulk_manage_transactions(
                         ]
                     ),
                 )
-            )
-            response = ynab.SaveTransactionsResponse.model_validate_json(
-                http_response.raw_data
             )
             updated = response.data.transactions or []
             for i, transaction in zip(update_indices, updated):

@@ -83,8 +83,8 @@ def test_bulk_manage_transactions_handles_mixed_batch(mocker: MockerFixture) -> 
             }
         }
     ).encode()
-    transactions_api.return_value.update_transactions_with_http_info.return_value = (
-        SimpleNamespace(raw_data=updated_raw)
+    transactions_api.return_value.update_transactions.return_value = (
+        ynab.SaveTransactionsResponse.model_validate_json(updated_raw)
     )
     transactions_api.return_value.delete_transaction.return_value = SimpleNamespace(
         data=SimpleNamespace(transaction=SimpleNamespace(id="txn-2"))
@@ -121,9 +121,7 @@ def test_bulk_manage_transactions_handles_mixed_batch(mocker: MockerFixture) -> 
     )
     assert created_wrapper.transactions[0].amount == -5000
 
-    update_call = (
-        transactions_api.return_value.update_transactions_with_http_info.call_args
-    )
+    update_call = transactions_api.return_value.update_transactions.call_args
     updated_wrapper = update_call.kwargs["data"]
     assert updated_wrapper.transactions[0].id == "txn-1"
     assert (
@@ -166,8 +164,8 @@ def test_bulk_manage_transactions_reports_per_item_failure(
             }
         }
     ).encode()
-    transactions_api.return_value.update_transactions_with_http_info.return_value = (
-        SimpleNamespace(raw_data=updated_raw)
+    transactions_api.return_value.update_transactions.return_value = (
+        ynab.SaveTransactionsResponse.model_validate_json(updated_raw)
     )
     transactions_api.return_value.delete_transaction.side_effect = ynab.ApiException(
         status=404,
@@ -299,15 +297,14 @@ def test_bulk_manage_transactions_reports_error_for_invalid_uuid_field(
     transactions_api.return_value.create_transaction.assert_not_called()
 
 
-def test_bulk_manage_transactions_update_parses_raw_response_directly(
+def test_bulk_manage_transactions_update_uses_plain_sdk_method(
     mocker: MockerFixture,
 ) -> None:
-    """The update group parses raw_data directly via update_transactions_with_http_info.
+    """The update group calls the plain update_transactions() convenience method.
 
-    Works around a real bug in the installed ynab SDK (v4.2.0): its
-    generated status-code map for update_transactions keys off '209'
-    instead of the '200' YNAB actually returns, so the convenience
-    method's deserialization silently yields None on a real success.
+    ynab 4.3.0 fixed the SDK's status-code map for this endpoint (it used to
+    key off '209' instead of the '200' YNAB returns, silently yielding None),
+    so the raw-response ``update_transactions_with_http_info`` bypass is gone.
     """
     client = mocker.Mock()
     transactions_api = mocker.patch(
@@ -335,8 +332,8 @@ def test_bulk_manage_transactions_update_parses_raw_response_directly(
             }
         }
     ).encode()
-    transactions_api.return_value.update_transactions_with_http_info.return_value = (
-        SimpleNamespace(raw_data=raw_body)
+    transactions_api.return_value.update_transactions.return_value = (
+        ynab.SaveTransactionsResponse.model_validate_json(raw_body)
     )
 
     operations: list[dict[str, object]] = [
@@ -348,8 +345,8 @@ def test_bulk_manage_transactions_update_parses_raw_response_directly(
     assert result == [
         {"action": "update", "id": "txn-1", "status": "ok", "detail": None}
     ]
-    transactions_api.return_value.update_transactions_with_http_info.assert_called_once()
-    transactions_api.return_value.update_transactions.assert_not_called()
+    transactions_api.return_value.update_transactions.assert_called_once()
+    transactions_api.return_value.update_transactions_with_http_info.assert_not_called()
 
 
 def test_bulk_manage_transactions_create_retries_transient_429(
@@ -451,9 +448,9 @@ def test_bulk_manage_transactions_update_retries_transient_429(
             }
         }
     ).encode()
-    transactions_api.return_value.update_transactions_with_http_info.side_effect = [
+    transactions_api.return_value.update_transactions.side_effect = [
         ynab.ApiException(status=429, reason="Too Many Requests", body=None),
-        SimpleNamespace(raw_data=updated_raw),
+        ynab.SaveTransactionsResponse.model_validate_json(updated_raw),
     ]
 
     operations: list[dict[str, object]] = [
@@ -465,9 +462,7 @@ def test_bulk_manage_transactions_update_retries_transient_429(
     assert result == [
         {"action": "update", "id": "txn-1", "status": "ok", "detail": None}
     ]
-    assert (
-        transactions_api.return_value.update_transactions_with_http_info.call_count == 2
-    )
+    assert transactions_api.return_value.update_transactions.call_count == 2
 
 
 def test_bulk_manage_transactions_delete_retries_transient_429(
