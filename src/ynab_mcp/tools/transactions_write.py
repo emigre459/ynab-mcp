@@ -26,6 +26,21 @@ class TransactionOperationResult(TypedDict):
     detail: str | None
 
 
+_UPDATE_FIELDS = (
+    "id",
+    "account_id",
+    "date",
+    "amount",
+    "payee_id",
+    "payee_name",
+    "category_id",
+    "memo",
+    "cleared",
+    "approved",
+    "flag_color",
+)
+
+
 def _build_new_transaction(operation: dict[str, object]) -> ynab.NewTransaction:
     """Build a ``NewTransaction`` from a raw ``create`` operation dict."""
     return ynab.NewTransaction(
@@ -45,19 +60,15 @@ def _build_new_transaction(operation: dict[str, object]) -> ynab.NewTransaction:
 def _build_updated_transaction(
     operation: dict[str, object],
 ) -> ynab.SaveTransactionWithIdOrImportId:
-    """Build a ``SaveTransactionWithIdOrImportId`` from a raw ``update`` dict."""
+    """Build a ``SaveTransactionWithIdOrImportId`` from a raw ``update`` dict.
+
+    Only keys present in ``operation`` are passed through. ``flag_color`` is
+    nullable in YNAB's PATCH schema (an explicit null clears the flag), so
+    defaulting an omitted key to None would wipe an existing flag on every
+    unrelated update; an explicit ``flag_color: None`` still clears it.
+    """
     return ynab.SaveTransactionWithIdOrImportId(
-        id=operation.get("id"),
-        account_id=operation.get("account_id"),
-        date=operation.get("date"),
-        amount=operation.get("amount"),
-        payee_id=operation.get("payee_id"),
-        payee_name=operation.get("payee_name"),
-        category_id=operation.get("category_id"),
-        memo=operation.get("memo"),
-        cleared=operation.get("cleared"),
-        approved=operation.get("approved"),
-        flag_color=operation.get("flag_color"),
+        **{key: operation[key] for key in _UPDATE_FIELDS if key in operation}
     )
 
 
@@ -195,14 +206,8 @@ def bulk_manage_transactions(
     update_indices = [i for i, op in enumerate(operations) if op["action"] == "update"]
     if update_indices:
         try:
-            # The installed ynab SDK (v4.2.0) maps this endpoint's success
-            # response to HTTP status '209' instead of the '200' YNAB
-            # actually returns, so update_transactions()'s built-in
-            # deserialization silently yields None on a real success.
-            # Parsing raw_data directly with the response model sidesteps
-            # that broken status-code map.
-            http_response = call_with_retry(
-                lambda: api.update_transactions_with_http_info(
+            response = call_with_retry(
+                lambda: api.update_transactions(
                     plan_id=budget_id,
                     data=ynab.PatchTransactionsWrapper(
                         transactions=[
@@ -211,9 +216,6 @@ def bulk_manage_transactions(
                         ]
                     ),
                 )
-            )
-            response = ynab.SaveTransactionsResponse.model_validate_json(
-                http_response.raw_data
             )
             updated = response.data.transactions or []
             for i, transaction in zip(update_indices, updated):

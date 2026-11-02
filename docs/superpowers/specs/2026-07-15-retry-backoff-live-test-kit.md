@@ -23,7 +23,7 @@ Edit `.env` and set:
 ## 2. Start the server and connect MCP Inspector
 
 ```bash
-npx @modelcontextprotocol/inspector uv run ynab-mcp
+make inspect
 ```
 
 Click **Connect**, then **List Tools** — confirm all 14 tools appear (unchanged from before this issue; retry wrapping added no new tools).

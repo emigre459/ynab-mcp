@@ -121,10 +121,18 @@ class MatchResult:
     unmatched: list[str]
 
 
+DEFAULT_DATE_WINDOW_DAYS = 5
+"""Default max days between a YNAB and Amazon date for a match.
+
+5, not 3: Chase can post a charge 4+ days after Amazon's completed date
+(weekends + bank lag), e.g. an order completed 10/09 posting on 10/13.
+"""
+
+
 def match_transactions(
     ynab_transactions: list[YnabCandidate],
     amazon_transactions: list[AmazonCandidate],
-    date_window_days: int = 3,
+    date_window_days: int = DEFAULT_DATE_WINDOW_DAYS,
 ) -> MatchResult:
     """Join YNAB transactions to Amazon charges on exact amount + date window.
 
@@ -146,7 +154,7 @@ def match_transactions(
     date_window_days : int, optional
         Maximum number of days apart (inclusive, either direction) a YNAB
         and Amazon date may be and still count as a match, by default
-        ``3``.
+        ``DEFAULT_DATE_WINDOW_DAYS`` (5).
 
     Returns
     -------

@@ -829,9 +829,9 @@ def _update_lines(
     for label, new in _requested_rows(names, operation):
         old = currents[label]
         if new is None:
-            # The update path always sends flag_color, null when unset, which
-            # clears an existing flag; every other unset field stays untouched.
-            if label == "Flag" and old is not None:
+            # Only an explicit flag_color null is sent (and clears the flag);
+            # every other unset field stays untouched.
+            if label == "Flag" and "flag_color" in operation and old is not None:
                 rows.append((label, f"{old}  →  {_CLEARED}"))
         elif _is_unchanged(label, new, old, operation, state):
             rows.append((label, f"{old or new} (no change)"))
@@ -867,7 +867,7 @@ def _operation_block(
             f"Update transaction {item_id} {_UNAVAILABLE}",
             *_new_value_lines(names, operation),
         ]
-        if operation.get("flag_color") is None:
+        if "flag_color" in operation and operation["flag_color"] is None:
             lines.append("  - Any existing flag is cleared")
         return lines
     return [

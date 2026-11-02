@@ -144,19 +144,11 @@ tools:
   approve + decline on both eras through the `era_mode` fixture in
   `tests/conftest.py`; tests about something else pass
   `require_write_approval=False`.
-  - **`transactions_write.py`'s `bulk_manage_transactions` update path
-    cannot use `TransactionsApi.update_transactions()`.** The installed
-    `ynab` SDK (v4.2.0, latest on PyPI) has a real bug: its generated
-    `_response_types_map` for that endpoint keys off HTTP `209` instead of
-    the `200` YNAB actually returns, so the convenience method silently
-    returns `None` on every real, successful call. The fix uses
-    `update_transactions_with_http_info()` and parses `raw_data` directly
-    with `ynab.SaveTransactionsResponse.model_validate_json(...)`,
-    bypassing the broken status-code dispatch. Reported upstream:
-    [ynab/ynab-sdk-python#33](https://github.com/ynab/ynab-sdk-python/issues/33)
-    ([fix PR](https://github.com/ynab/ynab-sdk-python/pull/34)) — if/when a
-    corrected SDK version ships, this workaround can likely be reverted to
-    the plain convenience method (confirm the fix landed before doing so).
+  - **`transactions_write.py`'s update path PATCHes only caller-supplied
+    keys.** `flag_color` is nullable in YNAB's PATCH schema (explicit null
+    clears the flag), so never default omitted update fields to `None` when
+    building `SaveTransactionWithIdOrImportId` — that silently wipes flags on
+    unrelated updates.
 - `server.py` — `build_server()` wires it all together; `list-budgets` is
   registered only when no default budget is configured; all four write
   tools are always registered (see `client.require_writable` above).
@@ -226,6 +218,8 @@ Every change must pass `make pr_check` (lint + tests) before a PR is opened.
 | `make e2e` | E2E tests (spawns the real `uv run ynab-mcp` stdio subprocess) |
 | `make integration` | Integration tests (real `ynab` SDK/HTTP stack against a local mock server, no live YNAB) |
 | `make run` | Run the YNAB MCP stdio server (needs a real `YNAB_PAT` in `.env`) |
+| `make inspect` | Launch MCP Inspector v2 web UI against the stdio server |
+| `make inspect-cli` | Inspector v2 CLI `tools/list` smoke check (no browser) |
 | `make coverage` | Tests with an 80% coverage gate |
 | `make security` | Dependency / SAST scan |
 | `make pr_check` | `lint` + `tests` |

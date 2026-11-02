@@ -41,7 +41,6 @@ at a time, in a fresh session:
 | C2 | "Try that again." | **Approve** | Transaction appears in YNAB |
 | C3 | "Change that transaction's category to <name>." | **Approve** | Prompt header identifies the transaction; shows `old  →  new` by name; YNAB updated |
 | C4 | "Delete that transaction." | **Approve** | Prompt identifies it; gone from YNAB |
-| C5 | Give a test transaction a flag in YNAB, then ask Claude to recategorize it | **Approve** | Prompt says `Flag: <color>  →  (cleared)`; confirm in YNAB that the flag really cleared. Report if it didn't: the prompt would be overstating |
 
 **If no prompt appears and Claude reports "this client can't show approval
 prompts":** that's the fail-closed path working, and it answers the open question.
@@ -49,8 +48,11 @@ Tell me, and we'll document that Claude Code needs the opt-out.
 
 ## 3. MCP Inspector v2
 
+Run I1 on the modern era, then repeat I1 and I4-I6 on the handshake era:
+
 ```bash
-npx @modelcontextprotocol/inspector@latest uv run ynab-mcp
+make inspect                       # 2026-07-28
+make inspect INSPECTOR_ERA=legacy  # handshake era (2025-11-25)
 ```
 
 Connect and open **Tools**. Run these, with ids from `list-*`:
@@ -60,15 +62,17 @@ Connect and open **Tools**. Run these, with ids from `list-*`:
 | I1 | `manage-budgeted-amount`: `operation=assign`, `month=current`, `category_id=<id>`, `amount=1000` | **Decline** | Prompt shows `<name>, <month>:  $X now  →  $1.00`; result says "Not applied"; YNAB unchanged |
 | I2 | `manage-budgeted-amount`: `operation=move`, `month=current`, `from_category_id=<id>`, `to_category_id=<id>`, `amount=1000` | **Approve** | Both totals in YNAB change as the prompt said |
 | I3 | Same as I2, with the two ids swapped | **Approve** | Restores the original totals |
-| I4 | `manage-scheduled-transaction`: `operation=create`, `account_id=<id>`, `date=<a future date>`, `amount=-1000`, `frequency=monthly` | **Approve** | Appears under scheduled transactions in YNAB |
-| I5 | `manage-scheduled-transaction`: `operation=delete`, `scheduled_transaction_id=<id from I4>` | **Approve** | Prompt identifies it; gone from YNAB |
+| I4 | `manage-scheduled-transaction`: `operation=create`, `account_id=<id>`, `date=<a future date>`, `amount=-1000`, `frequency=monthly`, `memo=keep me` | **Approve** | Appears under scheduled transactions in YNAB, with the memo |
+| I5 | `manage-scheduled-transaction`: `operation=update`, same fields and `scheduled_transaction_id=<id from I4>`, **without** `memo` | **Approve** | Prompt says `Memo:  keep me  →  (cleared)`, and the memo is really gone in YNAB. If it's still there, tell me: the prompt overstates |
+| I6 | `manage-scheduled-transaction`: `operation=delete`, `scheduled_transaction_id=<id from I4>` | **Approve** | Prompt identifies it; gone from YNAB |
 
 Note how Inspector renders multi-line text and the yes/no field.
 
 ## 4. Both eras from a terminal
 
-Inspector's era isn't under your control, so this script pins each one against
-real data. Save it as `.context/try_approval.py`, and set `ACCOUNT_ID` first:
+This script drives a create and delete on each era against real data, with a
+pause that makes the "changed in YNAB" refusal easy to trigger. Save it as
+`.context/try_approval.py`, and set `ACCOUNT_ID` first:
 
 ```python
 import asyncio, sys

@@ -374,11 +374,22 @@ def test_bulk_requested_but_unchanged_field_says_so() -> None:
     assert "  - Memo:      (none)  →  x" in summary
 
 
-def test_bulk_update_shows_flag_being_cleared() -> None:
-    """Every update sends flag_color null, so an existing flag visibly clears."""
+def test_bulk_update_leaves_omitted_flag_alone() -> None:
+    """An omitted flag isn't sent, so the prompt doesn't mention it."""
     summary = render_bulk(
         _BULK_NAMES,
         [{"action": "update", "id": "t1", "category_id": "c1"}],
+        {"transaction t1": _txn_state(flag_color="red")},
+    )
+
+    assert "Flag" not in summary
+
+
+def test_bulk_update_shows_explicit_flag_clear() -> None:
+    """An explicit null flag is sent and clears, so the prompt says so."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [{"action": "update", "id": "t1", "category_id": "c1", "flag_color": None}],
         {"transaction t1": _txn_state(flag_color="red")},
     )
 
@@ -574,15 +585,21 @@ def test_scheduled_update_read_failure_says_unset_fields_clear() -> None:
     assert "Any existing value for fields not listed is cleared" in summary
 
 
-def test_bulk_update_read_failure_says_flag_clears() -> None:
-    """A failed read can't show the flag, so the prompt warns generally."""
-    summary = render_bulk(
+def test_bulk_update_read_failure_mentions_flag_only_if_clearing() -> None:
+    """Without current values, only an explicit clear needs a warning."""
+    omitted = render_bulk(
         _BULK_NAMES,
         [{"action": "update", "id": "t1", "category_id": "c1"}],
         {"transaction t1": None},
     )
+    explicit = render_bulk(
+        _BULK_NAMES,
+        [{"action": "update", "id": "t1", "flag_color": None}],
+        {"transaction t1": None},
+    )
 
-    assert "Any existing flag is cleared" in summary
+    assert "flag" not in omitted.lower()
+    assert "Any existing flag is cleared" in explicit
 
 
 def test_bulk_same_named_categories_show_as_a_change() -> None:

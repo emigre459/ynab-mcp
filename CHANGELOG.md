@@ -8,8 +8,28 @@
   returns a "Not applied" error. Approvals are single-use, and shown values are
   re-read before writing, refusing if they changed. Clients that can't prompt are
   refused; `YNAB_REQUIRE_WRITE_APPROVAL=false` opts out for unattended runs.
+- deps: clear 19 Dependabot security alerts (#89-#107) with patched versions:
+  `authlib` 1.7.2 → 1.9.2 (incl. critical GHSA-6v38-4h7w-rj9h, a JWS signature
+  verification bypass), `joserfc` 1.7.3 → 1.7.7, `dnspython` 2.8.0 → 2.9.1
+  (all transitive), and `pypdf` 6.21.2 → 6.21.4 (direct; floor raised to
+  `>=6.21.4`).
+- fix: `bulk-manage-transactions` updates no longer clear existing flags —
+  every update PATCH used to send `flag_color: null` for an omitted flag,
+  which YNAB treats as "remove the flag" (so e.g. a category-only write from
+  `categorize-unapproved-transactions` wiped flags). Updates now send only the
+  keys the caller supplied; an explicit `flag_color: null` still clears it.
+- deps: drop the `update_transactions` SDK workaround (#50) — `ynab>=4.3.0`
+  (the upstream 209→200 status-code fix, ynab-sdk-python#34); the update path
+  calls `TransactionsApi.update_transactions()` again, pinned by a new
+  mock-server integration test that fails on the buggy 4.2.0.
 
 ## 2026-10-26
+- dev: adopt MCP Inspector v2 for local dev (#44) — `make inspect` launches
+  the `@modelcontextprotocol/inspector@latest` web UI against
+  `uv run ynab-mcp`; `make inspect-cli` runs a browser-free `tools/list`
+  smoke check. Both pass `--protocol-era modern`, since Inspector v2 defaults
+  ad-hoc stdio servers to the legacy `2025-11-25` handshake; override with
+  `INSPECTOR_ERA=legacy`. README and live-test-kit docs now use the targets.
 - deps: upgrade to FastMCP 4 / MCP Python SDK v2 (#43) — `fastmcp>=4.1.4,<5`
   (4.1.4, bringing `mcp` 2.3.0 transitively), lifting the `<4` cap #46 added
   to hold the major bump. No source changes were needed: the upgrade guide's
