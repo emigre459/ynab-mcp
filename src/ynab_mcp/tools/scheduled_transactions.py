@@ -1,15 +1,20 @@
 """manage-scheduled-transaction tool: create/update/delete a recurring transaction."""
 
 from datetime import date
+from functools import partial
 from typing import Literal
 
+import anyio.to_thread
 import ynab
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from mcp_types import InputRequiredResult
 
+from ynab_mcp.approval import require_approval
 from ynab_mcp.client import call_with_retry, require_writable, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
+from ynab_mcp.write_summaries import pending_scheduled_write
 
 
 def create_scheduled_transaction(
@@ -221,8 +226,9 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
     """
 
     @mcp.tool(name="manage-scheduled-transaction")
-    def manage_scheduled_transaction_tool(
+    async def manage_scheduled_transaction_tool(
         operation: Literal["create", "update", "delete"],
+        ctx: Context,
         scheduled_transaction_id: str | None = None,
         account_id: str | None = None,
         date: date | None = None,
@@ -234,7 +240,7 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
         memo: str | None = None,
         flag_color: str | None = None,
         budget_id: str | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | InputRequiredResult:
         """Create, update, or delete a recurring (scheduled) transaction.
 
         Parameters
@@ -270,48 +276,84 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
         require_writable(settings)
         resolved_budget_id = resolve_budget_id(budget_id, settings)
 
+        fields: dict[str, object] = {
+            "account_id": account_id,
+            "date": date,
+            "amount": amount,
+            "frequency": frequency,
+            "payee_id": payee_id,
+            "payee_name": payee_name,
+            "category_id": category_id,
+            "memo": memo,
+            "flag_color": flag_color,
+        }
+        optional = {
+            "payee_id": payee_id,
+            "payee_name": payee_name,
+            "category_id": category_id,
+            "memo": memo,
+            "flag_color": flag_color,
+        }
         if operation == "delete":
             if scheduled_transaction_id is None:
                 raise ToolError("delete requires scheduled_transaction_id.")
-            scheduled_transaction = delete_scheduled_transaction(
-                client, resolved_budget_id, scheduled_transaction_id
-            )
-            return scheduled_transaction.model_dump(mode="json")
-
-        if account_id is None or date is None or amount is None or frequency is None:
-            raise ToolError(
-                f"{operation} requires account_id, date, amount, and frequency."
-            )
-
-        if operation == "create":
-            scheduled_transaction = create_scheduled_transaction(
-                client,
-                resolved_budget_id,
-                account_id,
-                date,
-                amount,
-                frequency,
-                payee_id=payee_id,
-                payee_name=payee_name,
-                category_id=category_id,
-                memo=memo,
-                flag_color=flag_color,
-            )
-        else:
-            if scheduled_transaction_id is None:
-                raise ToolError("update requires scheduled_transaction_id.")
-            scheduled_transaction = update_scheduled_transaction(
+            write = partial(
+                delete_scheduled_transaction,
                 client,
                 resolved_budget_id,
                 scheduled_transaction_id,
-                account_id,
-                date,
-                amount,
-                frequency,
-                payee_id=payee_id,
-                payee_name=payee_name,
-                category_id=category_id,
-                memo=memo,
-                flag_color=flag_color,
             )
+        else:
+            if (
+                account_id is None
+                or date is None
+                or amount is None
+                or frequency is None
+            ):
+                raise ToolError(
+                    f"{operation} requires account_id, date, amount, and frequency."
+                )
+            if operation == "create":
+                write = partial(
+                    create_scheduled_transaction,
+                    client,
+                    resolved_budget_id,
+                    account_id,
+                    date,
+                    amount,
+                    frequency,
+                    **optional,
+                )
+            else:
+                if scheduled_transaction_id is None:
+                    raise ToolError("update requires scheduled_transaction_id.")
+                write = partial(
+                    update_scheduled_transaction,
+                    client,
+                    resolved_budget_id,
+                    scheduled_transaction_id,
+                    account_id,
+                    date,
+                    amount,
+                    frequency,
+                    **optional,
+                )
+
+        asked = await require_approval(
+            ctx,
+            settings,
+            tool_name="manage-scheduled-transaction",
+            budget_id=resolved_budget_id,
+            arguments={
+                "operation": operation,
+                "scheduled_transaction_id": scheduled_transaction_id,
+                **fields,
+            },
+            pending=pending_scheduled_write(
+                client, resolved_budget_id, operation, scheduled_transaction_id, fields
+            ),
+        )
+        if asked is not None:
+            return asked
+        scheduled_transaction = await anyio.to_thread.run_sync(write)
         return scheduled_transaction.model_dump(mode="json")

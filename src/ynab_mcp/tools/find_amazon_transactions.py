@@ -84,8 +84,7 @@ def _build_reasoning(
         return f"Exact amount+date match against {order_desc}{suffix}."
     if classification == "near-date":
         return (
-            f"Amount match against {order_desc} within "
-            f"{date_window_days} days{suffix}."
+            f"Amount match against {order_desc} within {date_window_days} days{suffix}."
         )
     same_day_desc = "same-day" if same_day else "on a nearby date"
     return f"One leg of a split-shipment {order_desc}, charged {same_day_desc}{suffix}."

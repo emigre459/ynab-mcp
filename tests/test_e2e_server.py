@@ -1,9 +1,11 @@
 """E2E: the real `uv run ynab-mcp` stdio server speaks MCP correctly."""
 
 import asyncio
+from typing import Any
 
 import pytest
 from fastmcp import Client
+from fastmcp.client.elicitation import ElicitResult
 from fastmcp.client.transports import StdioTransport
 
 
@@ -94,3 +96,72 @@ def test_uv_run_ynab_mcp_stdio_server_lists_expected_tools(
 # of the (wrong) credentials passed, making such a test non-deterministic.
 # The login()-success and login()-failure registration paths are instead
 # covered deterministically by the fully-mocked tests in test_server.py.
+
+
+async def _decline_write(
+    transport: StdioTransport, mode: str
+) -> tuple[list[str], bool, str]:
+    """Call a write tool over stdio, declining its approval prompt.
+
+    Parameters
+    ----------
+    transport : fastmcp.client.transports.StdioTransport
+        A transport for the real `uv run ynab-mcp` subprocess.
+    mode : str
+        The ``fastmcp.Client`` connect mode, selecting the protocol era.
+
+    Returns
+    -------
+    tuple[list[str], bool, str]
+        The prompts received, whether the result was an error, and its text.
+    """
+    prompts: list[str] = []
+
+    async def decline(
+        message: str, response_type: Any, params: Any, context: Any
+    ) -> ElicitResult:
+        prompts.append(message)
+        return ElicitResult(action="decline")
+
+    async with Client(transport, mode=mode, elicitation_handler=decline) as client:
+        result = await client.call_tool(
+            "manage-payees",
+            {
+                "operation": "rename",
+                "payee_id": "payee-e2e",
+                "new_name": "Renamed",
+                "budget_id": "budget-e2e",
+            },
+            raise_on_error=False,
+        )
+    return prompts, result.is_error, result.content[0].text
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+def test_write_tool_prompts_then_declines_over_stdio(mode: str) -> None:
+    """The real subprocess asks before writing, on both protocol eras.
+
+    With a dummy PAT the name lookups fail, which exercises the raw-id
+    fallback: the prompt still appears. Declining then refuses before any write.
+    """
+    transport = StdioTransport(
+        command="uv",
+        args=["run", "ynab-mcp"],
+        env={
+            "YNAB_PAT": "e2e-dummy-token",
+            "YNAB_DEFAULT_BUDGET_ID": "",
+            "YNAB_READ_ONLY": "false",
+            "YNAB_REQUIRE_WRITE_APPROVAL": "true",
+            "AMAZON_USERNAME": "",
+            "AMAZON_PASSWORD": "",
+        },
+    )
+
+    prompts, is_error, text = asyncio.run(_decline_write(transport, mode))
+
+    assert len(prompts) == 1
+    assert '"payee-e2e"  →  "Renamed"' in prompts[0]
+    assert 'budget "budget-e2e"' in prompts[0]
+    assert is_error
+    assert "Not applied" in text

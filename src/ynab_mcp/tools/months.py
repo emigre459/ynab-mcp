@@ -36,8 +36,7 @@ def parse_month(value: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise ToolError(
-            f"Invalid month {value!r}: expected an ISO date (YYYY-MM-DD) or "
-            "'current'."
+            f"Invalid month {value!r}: expected an ISO date (YYYY-MM-DD) or 'current'."
         ) from exc
 
 

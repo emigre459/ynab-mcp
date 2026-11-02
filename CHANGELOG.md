@@ -1,6 +1,13 @@
 # Changelog
 
 ## 2026-11-01
+- feat: approval prompt before every YNAB write (#45) — the four write tools show
+  a readable summary, by name and in dollars, and write only on an explicit yes.
+  Works on both MCP protocol eras (`InputRequiredResult` on `2026-07-28`,
+  `ctx.elicit()` on the handshake era). Decline or cancel writes nothing and
+  returns a "Not applied" error. Approvals are single-use, and shown values are
+  re-read before writing, refusing if they changed. Clients that can't prompt are
+  refused; `YNAB_REQUIRE_WRITE_APPROVAL=false` opts out for unattended runs.
 - deps: clear 19 Dependabot security alerts (#89-#107) with patched versions:
   `authlib` 1.7.2 → 1.9.2 (incl. critical GHSA-6v38-4h7w-rj9h, a JWS signature
   verification bypass), `joserfc` 1.7.3 → 1.7.7, `dnspython` 2.8.0 → 2.9.1

@@ -2,9 +2,11 @@
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 import tenacity
 import ynab
+from conftest import approve_handler, decline_handler
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from pytest import raises
@@ -102,7 +104,10 @@ def _build_registered_server(settings: Settings) -> FastMCP:
 def test_manage_payees_tool_dispatches_rename(mocker: MockerFixture) -> None:
     """The rename operation calls rename_payee with the caller's arguments."""
     settings = Settings(
-        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+        ynab_pat="x",
+        ynab_default_budget_id="budget-1",
+        ynab_read_only=False,
+        require_write_approval=False,
     )
     mcp = _build_registered_server(settings)
     rename_mock = mocker.patch(
@@ -129,7 +134,10 @@ def test_manage_payees_tool_dispatches_rename(mocker: MockerFixture) -> None:
 def test_manage_payees_tool_dispatches_merge(mocker: MockerFixture) -> None:
     """The merge operation calls merge_payees with the caller's arguments."""
     settings = Settings(
-        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+        ynab_pat="x",
+        ynab_default_budget_id="budget-1",
+        ynab_read_only=False,
+        require_write_approval=False,
     )
     mcp = _build_registered_server(settings)
     merge_mock = mocker.patch(
@@ -162,7 +170,10 @@ def test_manage_payees_tool_rejects_rename_without_new_name(
 ) -> None:
     """Rename without new_name raises before calling rename_payee."""
     settings = Settings(
-        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+        ynab_pat="x",
+        ynab_default_budget_id="budget-1",
+        ynab_read_only=False,
+        require_write_approval=False,
     )
     mcp = _build_registered_server(settings)
     rename_mock = mocker.patch("ynab_mcp.tools.payees_write.rename_payee")
@@ -183,7 +194,10 @@ def test_manage_payees_tool_rejects_merge_without_target(
 ) -> None:
     """Merge without target_payee_id raises before calling merge_payees."""
     settings = Settings(
-        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+        ynab_pat="x",
+        ynab_default_budget_id="budget-1",
+        ynab_read_only=False,
+        require_write_approval=False,
     )
     mcp = _build_registered_server(settings)
     merge_mock = mocker.patch("ynab_mcp.tools.payees_write.merge_payees")
@@ -237,3 +251,138 @@ def test_merge_payees_retries_transient_failure_on_read(
 
     assert result == merged_payee
     assert payees_api.return_value.get_payee_by_id.call_count == 2
+
+
+def _approval_settings() -> Settings:
+    return Settings(
+        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+    )
+
+
+def _patch_names(mocker: MockerFixture) -> None:
+    mocker.patch(
+        "ynab_mcp.write_summaries.list_budgets",
+        return_value=[SimpleNamespace(id="budget-1", name="Rench Budget")],
+    )
+    mocker.patch(
+        "ynab_mcp.write_summaries.list_payees",
+        return_value=[
+            SimpleNamespace(id="p1", name="AMZN Mktp"),
+            SimpleNamespace(id="p2", name="Amazon"),
+        ],
+    )
+
+
+def _call_with_handler(mcp: FastMCP, mode: str, handler: Any, args: dict) -> Any:
+    prompts: list[str] = []
+
+    async def recording(m: str, rt: Any, p: Any, c: Any) -> Any:
+        prompts.append(m)
+        return await handler(m, rt, p, c)
+
+    async def _call() -> Any:
+        async with Client(mcp, mode=mode, elicitation_handler=recording) as client:
+            return await client.call_tool("manage-payees", args, raise_on_error=False)
+
+    return asyncio.run(_call()), prompts
+
+
+def test_manage_payees_rename_approve(era_mode: str, mocker: MockerFixture) -> None:
+    """Approving a rename performs it, after showing names in the prompt."""
+    _patch_names(mocker)
+    mcp = _build_registered_server(_approval_settings())
+    rename_mock = mocker.patch(
+        "ynab_mcp.tools.payees_write.rename_payee",
+        return_value=SimpleNamespace(model_dump=lambda mode="json": {"id": "p1"}),
+    )
+
+    result, prompts = _call_with_handler(
+        mcp,
+        era_mode,
+        approve_handler,
+        {"operation": "rename", "payee_id": "p1", "new_name": "Amazon"},
+    )
+
+    assert result.data == {"id": "p1"}
+    assert '"AMZN Mktp"  →  "Amazon"' in prompts[0]
+    rename_mock.assert_called_once_with(mocker.ANY, "budget-1", "p1", "Amazon")
+
+
+def test_manage_payees_merge_approve(era_mode: str, mocker: MockerFixture) -> None:
+    """Approving a merge performs it, after naming both payees in the prompt."""
+    _patch_names(mocker)
+    mcp = _build_registered_server(_approval_settings())
+    merge_mock = mocker.patch(
+        "ynab_mcp.tools.payees_write.merge_payees",
+        return_value=SimpleNamespace(model_dump=lambda mode="json": {"id": "p2"}),
+    )
+
+    result, prompts = _call_with_handler(
+        mcp,
+        era_mode,
+        approve_handler,
+        {"operation": "merge", "source_payee_id": "p1", "target_payee_id": "p2"},
+    )
+
+    assert result.data == {"id": "p2"}
+    assert '"AMZN Mktp" into "Amazon"' in prompts[0]
+    merge_mock.assert_called_once_with(mocker.ANY, "budget-1", "p1", "p2")
+
+
+def test_manage_payees_decline_makes_no_write(
+    era_mode: str, mocker: MockerFixture
+) -> None:
+    """Declining never reaches the YNAB write call."""
+    _patch_names(mocker)
+    mcp = _build_registered_server(_approval_settings())
+    rename_mock = mocker.patch("ynab_mcp.tools.payees_write.rename_payee")
+
+    result, _ = _call_with_handler(
+        mcp,
+        era_mode,
+        decline_handler,
+        {"operation": "rename", "payee_id": "p1", "new_name": "Amazon"},
+    )
+
+    assert result.is_error
+    assert "Not applied" in result.content[0].text
+    rename_mock.assert_not_called()
+
+
+def test_manage_payees_read_only_shows_no_prompt(
+    era_mode: str, mocker: MockerFixture
+) -> None:
+    """require_writable still runs first: read-only never prompts or reads."""
+    budgets = mocker.patch("ynab_mcp.write_summaries.list_budgets")
+    mcp = _build_registered_server(
+        Settings(ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=True)
+    )
+
+    result, prompts = _call_with_handler(
+        mcp,
+        era_mode,
+        approve_handler,
+        {"operation": "rename", "payee_id": "p1", "new_name": "Amazon"},
+    )
+
+    assert result.is_error
+    assert "YNAB_READ_ONLY" in result.content[0].text
+    assert prompts == []
+    budgets.assert_not_called()
+
+
+def test_manage_payees_missing_fields_rejected_before_prompt(
+    era_mode: str, mocker: MockerFixture
+) -> None:
+    """A call that would be rejected anyway never asks for approval."""
+    budgets = mocker.patch("ynab_mcp.write_summaries.list_budgets")
+    mcp = _build_registered_server(_approval_settings())
+
+    result, prompts = _call_with_handler(
+        mcp, era_mode, approve_handler, {"operation": "rename", "payee_id": "p1"}
+    )
+
+    assert result.is_error
+    assert "rename requires" in result.content[0].text
+    assert prompts == []
+    budgets.assert_not_called()
