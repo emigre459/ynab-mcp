@@ -3,6 +3,7 @@
 import json
 from types import SimpleNamespace
 
+import pytest
 import tenacity
 import ynab
 from fastmcp.exceptions import ToolError
@@ -347,6 +348,45 @@ def test_bulk_manage_transactions_update_uses_plain_sdk_method(
     ]
     transactions_api.return_value.update_transactions.assert_called_once()
     transactions_api.return_value.update_transactions_with_http_info.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected_payload"),
+    [
+        (
+            {"action": "update", "id": "txn-1", "memo": "groceries"},
+            {"id": "txn-1", "memo": "groceries"},
+        ),
+        (
+            {"action": "update", "id": "txn-1", "flag_color": None},
+            {"id": "txn-1", "flag_color": None},
+        ),
+    ],
+)
+def test_bulk_manage_transactions_update_sends_only_caller_supplied_fields(
+    mocker: MockerFixture,
+    operation: dict[str, object],
+    expected_payload: dict[str, object],
+) -> None:
+    """An update PATCHes only the keys the caller passed.
+
+    ``flag_color`` is nullable in YNAB's PATCH schema -- an explicit null
+    *clears* the flag -- so filling an omitted key with None would wipe an
+    existing flag on every unrelated update (e.g. a category-only write).
+    An explicit ``flag_color: None`` from the caller still clears it.
+    """
+    client = mocker.Mock()
+    transactions_api = mocker.patch(
+        "ynab_mcp.tools.transactions_write.ynab.TransactionsApi"
+    )
+    transactions_api.return_value.update_transactions.return_value = SimpleNamespace(
+        data=SimpleNamespace(transactions=[SimpleNamespace(id="txn-1")])
+    )
+
+    bulk_manage_transactions(client, "budget-1", [operation])
+
+    wrapper = transactions_api.return_value.update_transactions.call_args.kwargs["data"]
+    assert [t.to_dict() for t in wrapper.transactions] == [expected_payload]
 
 
 def test_bulk_manage_transactions_create_retries_transient_429(

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-01
+- fix: `bulk-manage-transactions` updates no longer clear existing flags —
+  every update PATCH used to send `flag_color: null` for an omitted flag,
+  which YNAB treats as "remove the flag" (so e.g. a category-only write from
+  `categorize-unapproved-transactions` wiped flags). Updates now send only the
+  keys the caller supplied; an explicit `flag_color: null` still clears it.
+- deps: drop the `update_transactions` SDK workaround (#50) — `ynab>=4.3.0`
+  (the upstream 209→200 status-code fix, ynab-sdk-python#34); the update path
+  calls `TransactionsApi.update_transactions()` again, pinned by a new
+  mock-server integration test that fails on the buggy 4.2.0.
+
 ## 2026-10-26
 - dev: adopt MCP Inspector v2 for local dev (#44) — `make inspect` launches
   the `@modelcontextprotocol/inspector@latest` web UI against

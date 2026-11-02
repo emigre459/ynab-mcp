@@ -118,6 +118,11 @@ tools:
   required-field validation and a `fastmcp.Client`-based closure-dispatch
   test — the underlying plain function alone doesn't exercise that
   branching.
+  - **`transactions_write.py`'s update path PATCHes only caller-supplied
+    keys.** `flag_color` is nullable in YNAB's PATCH schema (explicit null
+    clears the flag), so never default omitted update fields to `None` when
+    building `SaveTransactionWithIdOrImportId` — that silently wipes flags on
+    unrelated updates.
 - `server.py` — `build_server()` wires it all together; `list-budgets` is
   registered only when no default budget is configured; all four write
   tools are always registered (see `client.require_writable` above).

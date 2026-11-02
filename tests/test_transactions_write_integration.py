@@ -112,4 +112,4 @@ def test_bulk_update_returns_real_transaction_data_on_http_200(
     sent = payload["transactions"]
     assert isinstance(sent, list) and len(sent) == 1
     assert sent[0]["id"] == _TXN_ID
-    assert sent[0]["memo"] == "updated"
+    assert sent[0] == {"id": _TXN_ID, "memo": "updated"}
