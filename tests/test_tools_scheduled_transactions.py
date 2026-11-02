@@ -3,9 +3,12 @@
 import asyncio
 from datetime import date
 from types import SimpleNamespace
+from typing import Any
 
+import pytest
 import tenacity
 import ynab
+from conftest import approve_handler, decline_handler
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from pytest import raises
@@ -184,7 +187,10 @@ def test_manage_scheduled_transaction_tool_dispatches_create(
 ) -> None:
     """The create operation calls create_scheduled_transaction with the args."""
     settings = Settings(
-        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+        ynab_pat="x",
+        ynab_default_budget_id="budget-1",
+        ynab_read_only=False,
+        require_write_approval=False,
     )
     mcp = _build_registered_server(settings)
     create_mock = mocker.patch(
@@ -229,7 +235,10 @@ def test_manage_scheduled_transaction_tool_dispatches_update(
 ) -> None:
     """The update operation calls update_scheduled_transaction with the args."""
     settings = Settings(
-        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+        ynab_pat="x",
+        ynab_default_budget_id="budget-1",
+        ynab_read_only=False,
+        require_write_approval=False,
     )
     mcp = _build_registered_server(settings)
     update_mock = mocker.patch(
@@ -276,7 +285,10 @@ def test_manage_scheduled_transaction_tool_dispatches_delete(
 ) -> None:
     """The delete operation calls delete_scheduled_transaction with the args."""
     settings = Settings(
-        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+        ynab_pat="x",
+        ynab_default_budget_id="budget-1",
+        ynab_read_only=False,
+        require_write_approval=False,
     )
     mcp = _build_registered_server(settings)
     delete_mock = mocker.patch(
@@ -305,7 +317,10 @@ def test_manage_scheduled_transaction_tool_rejects_create_without_required_field
 ) -> None:
     """Create without account_id/date/amount/frequency raises before dispatch."""
     settings = Settings(
-        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+        ynab_pat="x",
+        ynab_default_budget_id="budget-1",
+        ynab_read_only=False,
+        require_write_approval=False,
     )
     mcp = _build_registered_server(settings)
     create_mock = mocker.patch(
@@ -441,7 +456,10 @@ def test_manage_scheduled_transaction_tool_rejects_update_without_id(
 ) -> None:
     """Update without scheduled_transaction_id raises before dispatch."""
     settings = Settings(
-        ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+        ynab_pat="x",
+        ynab_default_budget_id="budget-1",
+        ynab_read_only=False,
+        require_write_approval=False,
     )
     mcp = _build_registered_server(settings)
     update_mock = mocker.patch(
@@ -464,3 +482,174 @@ def test_manage_scheduled_transaction_tool_rejects_update_without_id(
     with raises(ToolError, match="update requires scheduled_transaction_id"):
         asyncio.run(_call())
     update_mock.assert_not_called()
+
+
+_APPROVAL_SETTINGS = Settings(
+    ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+)
+_CREATE = {
+    "operation": "create",
+    "account_id": "acct-1",
+    "date": "2030-03-01",
+    "amount": -50000,
+    "frequency": "monthly",
+}
+_UPDATE = {**_CREATE, "operation": "update", "scheduled_transaction_id": "st1"}
+_DELETE = {"operation": "delete", "scheduled_transaction_id": "st1"}
+_MODULE = "ynab_mcp.tools.scheduled_transactions"
+
+
+def _existing(amount: int = -15490) -> SimpleNamespace:
+    detail = SimpleNamespace(
+        date_first=date(2030, 3, 1),
+        frequency="monthly",
+        amount=amount,
+        account_id="acct-1",
+        account_name="Chase Checking",
+        payee_id="p2",
+        payee_name="Netflix",
+        category_id=None,
+        category_name=None,
+        memo=None,
+        flag_color=None,
+    )
+    return SimpleNamespace(data=SimpleNamespace(scheduled_transaction=detail))
+
+
+def _patch_lookups(mocker: MockerFixture, reads: Any) -> None:
+    prefix = "ynab_mcp.write_summaries"
+    mocker.patch(
+        f"{prefix}.list_budgets",
+        return_value=[SimpleNamespace(id="budget-1", name="Rench Budget")],
+    )
+    mocker.patch(
+        f"{prefix}.list_accounts",
+        return_value=[SimpleNamespace(id="acct-1", name="Chase Checking")],
+    )
+    mocker.patch(f"{prefix}.list_categories", return_value=[])
+    mocker.patch(f"{prefix}.list_payees", return_value=[])
+    api = mocker.patch("ynab.ScheduledTransactionsApi").return_value
+    api.get_scheduled_transaction_by_id.side_effect = reads
+
+
+def _call_tool(mode: str, handler: Any, args: dict[str, Any]) -> tuple[Any, list[str]]:
+    mcp = _build_registered_server(_APPROVAL_SETTINGS)
+    prompts: list[str] = []
+
+    async def recording(m: str, rt: Any, p: Any, c: Any) -> Any:
+        prompts.append(m)
+        return await handler(m, rt, p, c)
+
+    async def _call() -> Any:
+        async with Client(mcp, mode=mode, elicitation_handler=recording) as client:
+            return await client.call_tool(
+                "manage-scheduled-transaction", args, raise_on_error=False
+            )
+
+    return asyncio.run(_call()), prompts
+
+
+_WRITTEN = SimpleNamespace(model_dump=lambda mode="json": {"id": "st1"})
+
+
+def test_create_approve_writes(era_mode: str, mocker: MockerFixture) -> None:
+    """Approving a create writes it, after naming the account in the prompt."""
+    _patch_lookups(mocker, lambda **k: _existing())
+    write = mocker.patch(
+        f"{_MODULE}.create_scheduled_transaction", return_value=_WRITTEN
+    )
+
+    result, prompts = _call_tool(era_mode, approve_handler, _CREATE)
+
+    assert result.data == {"id": "st1"}
+    assert "Chase Checking" in prompts[0]
+    write.assert_called_once()
+
+
+def test_update_approve_writes(era_mode: str, mocker: MockerFixture) -> None:
+    """Approving an update writes it, after showing old and new amounts."""
+    _patch_lookups(mocker, lambda **k: _existing())
+    write = mocker.patch(
+        f"{_MODULE}.update_scheduled_transaction", return_value=_WRITTEN
+    )
+
+    result, prompts = _call_tool(era_mode, approve_handler, _UPDATE)
+
+    assert result.data == {"id": "st1"}
+    assert "-$15.49  →  -$50.00" in prompts[0]
+    write.assert_called_once()
+
+
+def test_delete_approve_writes(era_mode: str, mocker: MockerFixture) -> None:
+    """Approving a delete writes it, after identifying what disappears."""
+    _patch_lookups(mocker, lambda **k: _existing())
+    write = mocker.patch(
+        f"{_MODULE}.delete_scheduled_transaction", return_value=_WRITTEN
+    )
+
+    result, prompts = _call_tool(era_mode, approve_handler, _DELETE)
+
+    assert result.data == {"id": "st1"}
+    assert "Netflix, 2030-03-01, -$15.49, monthly, Chase Checking" in prompts[0]
+    write.assert_called_once_with(mocker.ANY, "budget-1", "st1")
+
+
+@pytest.mark.parametrize(
+    ("args", "function"),
+    [
+        (_CREATE, "create_scheduled_transaction"),
+        (_UPDATE, "update_scheduled_transaction"),
+        (_DELETE, "delete_scheduled_transaction"),
+    ],
+    ids=["create", "update", "delete"],
+)
+def test_decline_makes_no_write(
+    era_mode: str, mocker: MockerFixture, args: dict[str, Any], function: str
+) -> None:
+    """Declining never reaches a YNAB write."""
+    _patch_lookups(mocker, lambda **k: _existing())
+    write = mocker.patch(f"{_MODULE}.{function}")
+
+    result, _ = _call_tool(era_mode, decline_handler, args)
+
+    assert result.is_error
+    assert "Not applied" in result.content[0].text
+    write.assert_not_called()
+
+
+def test_scheduled_change_refuses(era_mode: str, mocker: MockerFixture) -> None:
+    """An item changed after the prompt is refused, not overwritten."""
+    amounts = iter([-15490, -99000])
+    _patch_lookups(mocker, lambda **k: _existing(next(amounts)))
+    write = mocker.patch(f"{_MODULE}.update_scheduled_transaction")
+
+    result, _ = _call_tool(era_mode, approve_handler, _UPDATE)
+
+    assert result.is_error
+    assert "changed in YNAB" in result.content[0].text
+    write.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        ({"operation": "create", "account_id": "a"}, "create requires"),
+        (
+            {k: v for k, v in _UPDATE.items() if k != "scheduled_transaction_id"},
+            "update requires scheduled_transaction_id",
+        ),
+        ({"operation": "delete"}, "delete requires"),
+    ],
+    ids=["create", "update", "delete"],
+)
+def test_missing_fields_rejected_before_prompt(
+    era_mode: str, mocker: MockerFixture, args: dict[str, Any], message: str
+) -> None:
+    """A call that would be rejected anyway never asks for approval."""
+    _patch_lookups(mocker, lambda **k: _existing())
+
+    result, prompts = _call_tool(era_mode, approve_handler, args)
+
+    assert result.is_error
+    assert message in result.content[0].text
+    assert prompts == []

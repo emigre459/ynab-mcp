@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
+from enum import Enum
 from typing import TypeVar
 
 import ynab
@@ -27,6 +28,8 @@ T = TypeVar("T")
 _FOOTER = "Nothing is written to YNAB unless you approve."
 _CENT = Decimal("0.01")
 _UNAVAILABLE = "(current values unavailable)"
+_CLEARED = "(cleared)"
+_NONE = "(none)"
 
 
 def one_line(value: object) -> str:
@@ -507,3 +510,216 @@ def pending_budget_move(
         ),
         render=render,
     )
+
+
+def _plain(value: object) -> object:
+    """Reduce an SDK field to a JSON-friendly value for state comparison."""
+    if isinstance(value, Enum):
+        return value.value
+    if value is None or isinstance(value, bool | int):
+        return value
+    return str(value)
+
+
+def _field_lines(rows: list[tuple[str, str]]) -> list[str]:
+    """Format label/value rows as aligned bullets."""
+    width = max((len(label) for label, _ in rows), default=0) + 1
+    return [f"  - {label + ':':<{width}}  {value}" for label, value in rows]
+
+
+def _scheduled_targets(
+    names: NameDirectory, fields: Mapping[str, object]
+) -> list[tuple[str, str | None]]:
+    """List a scheduled write's fields as requested; ``None`` means unset."""
+
+    def text(value: object) -> str | None:
+        return None if value is None else one_line(value)
+
+    payee = fields.get("payee_name") or (
+        names.payee(fields["payee_id"]) if fields.get("payee_id") else None
+    )
+    category = fields.get("category_id")
+    return [
+        ("Date", text(fields.get("date"))),
+        ("Frequency", text(fields.get("frequency"))),
+        ("Payee", text(payee)),
+        ("Amount", text(fields.get("amount"))),
+        ("Category", names.category(category) if category else None),
+        ("Account", names.account(fields.get("account_id"))),
+        ("Memo", text(fields.get("memo"))),
+        ("Flag", text(fields.get("flag_color"))),
+    ]
+
+
+def _scheduled_currents(state: ItemState) -> dict[str, str | None]:
+    def text(key: str) -> str | None:
+        value = state.get(key)
+        return None if value is None else one_line(value)
+
+    return {
+        "Date": text("date"),
+        "Frequency": text("frequency"),
+        "Payee": text("payee_name"),
+        "Amount": text("amount"),
+        "Category": text("category_name"),
+        "Account": text("account_name"),
+        "Memo": text("memo"),
+        "Flag": text("flag_color"),
+    }
+
+
+def _scheduled_identity(state: ItemState) -> str:
+    payee = one_line(state.get("payee_name") or "(no payee)")
+    return f"{payee}, {one_line(state['date'])}, {format_money(state['amount'])}"
+
+
+def render_scheduled(
+    names: NameDirectory,
+    operation: str,
+    scheduled_transaction_id: str | None,
+    fields: Mapping[str, object],
+    state: ItemState | None,
+) -> str:
+    """Build the prompt for a scheduled transaction write.
+
+    Parameters
+    ----------
+    names : NameDirectory
+        Display names.
+    operation : str
+        ``"create"``, ``"update"``, or ``"delete"``.
+    scheduled_transaction_id : str | None
+        The existing item, for ``"update"`` and ``"delete"``.
+    fields : Mapping[str, object]
+        The requested values.
+    state : ItemState | None
+        The existing item's current values, or ``None`` if unavailable.
+
+    Returns
+    -------
+    str
+        The prompt text. An update replaces the whole item, so a field left
+        unset clears any existing value, and the prompt shows that.
+    """
+    in_budget = f'in budget "{one_line(names.budget)}"?'
+    item_id = one_line(scheduled_transaction_id)
+    if operation == "delete":
+        if state is None:
+            return _prompt(
+                f"Delete scheduled transaction {item_id} {_UNAVAILABLE} {in_budget}",
+                [],
+            )
+        return _prompt(
+            f"Delete scheduled transaction {in_budget}",
+            [
+                f"  - {_scheduled_identity(state)}, {one_line(state['frequency'])}, "
+                f"{one_line(state['account_name'])}"
+            ],
+        )
+
+    def shown(label: str, value: str | None) -> str:
+        if label == "Amount":
+            return format_flow(fields.get("amount"))
+        return value or ""
+
+    targets = _scheduled_targets(names, fields)
+    if operation == "create" or state is None:
+        header = (
+            f"Create scheduled transaction {in_budget}"
+            if operation == "create"
+            else f"Update scheduled transaction {item_id} {_UNAVAILABLE} {in_budget}"
+        )
+        rows = [(label, shown(label, value)) for label, value in targets if value]
+        return _prompt(header, _field_lines(rows))
+
+    currents = _scheduled_currents(state)
+    rows = []
+    for label, new in targets:
+        old = currents[label]
+        if old == new:
+            continue
+        if label == "Amount":
+            old_text = format_money(state["amount"])
+            new_text = format_money(fields.get("amount"))
+        else:
+            old_text, new_text = old or _NONE, new or _CLEARED
+        rows.append((label, f"{old_text}  →  {new_text}"))
+    return _prompt(
+        f"Update scheduled transaction ({_scheduled_identity(state)}) {in_budget}",
+        _field_lines(rows),
+    )
+
+
+def pending_scheduled_write(
+    client: ynab.ApiClient,
+    budget_id: str,
+    operation: str,
+    scheduled_transaction_id: str | None,
+    fields: Mapping[str, object],
+) -> PendingWrite:
+    """Describe a scheduled transaction write for approval.
+
+    Parameters
+    ----------
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    budget_id : str
+        The YNAB budget id.
+    operation : str
+        ``"create"``, ``"update"``, or ``"delete"``.
+    scheduled_transaction_id : str | None
+        The existing item, for ``"update"`` and ``"delete"``.
+    fields : Mapping[str, object]
+        The requested values: ``account_id``, ``date``, ``amount``,
+        ``frequency``, ``payee_id``, ``payee_name``, ``category_id``, ``memo``,
+        ``flag_color``.
+
+    Returns
+    -------
+    PendingWrite
+        A pending write whose re-check covers the existing item, if any.
+    """
+    label = f"scheduled transaction {one_line(scheduled_transaction_id)}"
+
+    def read_state() -> dict[str, ItemState | None]:
+        if scheduled_transaction_id is None:
+            return {}
+        api = ynab.ScheduledTransactionsApi(client)
+        try:
+            item = call_with_retry(
+                lambda: api.get_scheduled_transaction_by_id(
+                    plan_id=budget_id,
+                    scheduled_transaction_id=scheduled_transaction_id,
+                )
+            ).data.scheduled_transaction
+        except Exception:
+            return {label: None}
+        return {
+            label: {
+                "date": _plain(item.date_first),
+                "frequency": _plain(item.frequency),
+                "amount": item.amount,
+                "account_id": _plain(item.account_id),
+                "account_name": item.account_name,
+                "payee_id": _plain(item.payee_id),
+                "payee_name": item.payee_name,
+                "category_id": _plain(item.category_id),
+                "category_name": item.category_name,
+                "memo": item.memo,
+                "flag_color": _plain(item.flag_color),
+            }
+        }
+
+    def render(states: Mapping[str, ItemState | None]) -> str:
+        names = load_names(
+            client,
+            budget_id,
+            categories=bool(fields.get("category_id")),
+            accounts=operation != "delete",
+            payees=bool(fields.get("payee_id")),
+        )
+        return render_scheduled(
+            names, operation, scheduled_transaction_id, fields, states.get(label)
+        )
+
+    return PendingWrite(read_state=read_state, render=render)

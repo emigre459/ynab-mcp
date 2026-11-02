@@ -14,6 +14,7 @@ from ynab_mcp.write_summaries import (
     one_line,
     render_budget_assign,
     render_budget_move,
+    render_scheduled,
     render_payee_merge,
     render_payee_rename,
 )
@@ -178,3 +179,103 @@ def test_budget_summary_read_failure_marks_unavailable() -> None:
     assert "c1, November 2026 (current values unavailable):  $450.00" in assign
     assert "From:    c2, November 2026 (current values unavailable)" in move
     assert "To:      c1, November 2026 (current values unavailable)" in move
+
+
+_SCHEDULED_STATE = {
+    "date": "2026-11-05",
+    "frequency": "monthly",
+    "amount": -15490,
+    "account_id": "a1",
+    "account_name": "Chase Checking",
+    "payee_id": "p2",
+    "payee_name": "Netflix",
+    "category_id": "c1",
+    "category_name": "Groceries",
+    "memo": "plan",
+    "flag_color": None,
+}
+_SCHEDULED_FIELDS = {
+    "account_id": "a1",
+    "date": date(2026, 11, 5),
+    "amount": -15490,
+    "frequency": "monthly",
+    "payee_id": "p2",
+    "payee_name": None,
+    "category_id": "c1",
+    "memo": "plan",
+    "flag_color": None,
+}
+
+
+def test_scheduled_create_summary() -> None:
+    """A create lists what will be scheduled, by name."""
+    assert render_scheduled(_NAMES, "create", None, _SCHEDULED_FIELDS, None) == (
+        'Create scheduled transaction in budget "Rench Budget"?\n'
+        "\n"
+        "  - Date:       2026-11-05\n"
+        "  - Frequency:  monthly\n"
+        "  - Payee:      Amazon\n"
+        "  - Amount:     -$15.49 (outflow)\n"
+        "  - Category:   Groceries\n"
+        "  - Account:    Chase Checking\n"
+        "  - Memo:       plan\n"
+        "\n"
+        f"{_FOOTER}"
+    )
+
+
+def test_scheduled_update_summary_shows_old_to_new() -> None:
+    """An update identifies the item and shows only what changes."""
+    names = NameDirectory(
+        budget="Rench Budget",
+        categories={"c2": "Dining Out"},
+        accounts={"a1": "Chase Checking"},
+        payees={"p2": "Netflix"},
+    )
+    fields = {**_SCHEDULED_FIELDS, "category_id": "c2", "amount": -20000}
+
+    assert render_scheduled(names, "update", "s1", fields, _SCHEDULED_STATE) == (
+        "Update scheduled transaction (Netflix, 2026-11-05, -$15.49) "
+        'in budget "Rench Budget"?\n'
+        "\n"
+        "  - Amount:    -$15.49  →  -$20.00\n"
+        "  - Category:  Groceries  →  Dining Out\n"
+        "\n"
+        f"{_FOOTER}"
+    )
+
+
+def test_scheduled_update_shows_cleared_fields() -> None:
+    """Omitted fields are sent as null and clear real data, so the prompt says so."""
+    names = NameDirectory(
+        budget="Rench Budget",
+        accounts={"a1": "Chase Checking"},
+        payees={"p2": "Netflix"},
+    )
+    fields = {**_SCHEDULED_FIELDS, "category_id": None, "memo": None}
+
+    summary = render_scheduled(names, "update", "s1", fields, _SCHEDULED_STATE)
+
+    assert "  - Category:  Groceries  →  (cleared)" in summary
+    assert "  - Memo:      plan  →  (cleared)" in summary
+
+
+def test_scheduled_update_read_failure_marks_unavailable() -> None:
+    """Without current values the prompt lists the new ones and says so."""
+    summary = render_scheduled(_NAMES, "update", "s1", _SCHEDULED_FIELDS, None)
+
+    assert summary.startswith(
+        "Update scheduled transaction s1 (current values unavailable) in budget"
+    )
+    assert "  - Amount:     -$15.49 (outflow)" in summary
+
+
+def test_scheduled_delete_summary() -> None:
+    """A delete identifies what disappears."""
+    assert render_scheduled(_NAMES, "delete", "s1", {}, _SCHEDULED_STATE) == (
+        'Delete scheduled transaction in budget "Rench Budget"?\n'
+        "\n"
+        "  - Netflix, 2026-11-05, -$15.49, monthly, Chase Checking\n"
+        "\n"
+        f"{_FOOTER}"
+    )
