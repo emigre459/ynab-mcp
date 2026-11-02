@@ -1,5 +1,6 @@
 """Tests for ynab_mcp.write_summaries."""
 
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,8 @@ from ynab_mcp.write_summaries import (
     format_money,
     load_names,
     one_line,
+    render_budget_assign,
+    render_budget_move,
     render_payee_merge,
     render_payee_rename,
 )
@@ -129,3 +132,49 @@ def test_payee_new_name_cannot_forge_lines() -> None:
 
     assert '"x Nothing will change"' in summary
     assert "\nNothing will change" not in summary
+
+
+_NOV = date(2026, 11, 1)
+
+
+def test_budget_assign_summary() -> None:
+    """An assign names the category and shows the current and new amounts."""
+    state = {"budgeted": 400000, "category_name": "Groceries"}
+
+    assert render_budget_assign("Rench Budget", "c1", _NOV, 450000, state) == (
+        'Set budgeted amount in budget "Rench Budget"?\n'
+        "\n"
+        "  - Groceries, November 2026:  $400.00 now  →  $450.00\n"
+        "\n"
+        f"{_FOOTER}"
+    )
+
+
+def test_budget_move_summary() -> None:
+    """A move shows the amount plus each category's before and after."""
+    from_state = {"budgeted": 100000, "category_name": "Dining Out"}
+    to_state = {"budgeted": 400000, "category_name": "Groceries"}
+
+    summary = render_budget_move(
+        "Rench Budget", "c2", "c1", _NOV, 50000, from_state, to_state
+    )
+
+    assert summary == (
+        'Move budgeted money in budget "Rench Budget"?\n'
+        "\n"
+        "  - Amount:  $50.00\n"
+        "  - From:    Dining Out, November 2026:  $100.00 now  →  $50.00\n"
+        "  - To:      Groceries, November 2026:  $400.00 now  →  $450.00\n"
+        "\n"
+        f"{_FOOTER}"
+    )
+
+
+def test_budget_summary_read_failure_marks_unavailable() -> None:
+    """A failed read shows the raw id and says values are unavailable."""
+    assign = render_budget_assign("Rench Budget", "c1", _NOV, 450000, None)
+    move = render_budget_move("Rench Budget", "c2", "c1", _NOV, 50000, None, None)
+
+    assert "c1, November 2026 (current values unavailable):  $450.00" in assign
+    assert "From:    c2, November 2026 (current values unavailable)" in move
+    assert "To:      c1, November 2026 (current values unavailable)" in move

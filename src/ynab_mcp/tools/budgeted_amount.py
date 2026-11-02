@@ -1,15 +1,20 @@
 """manage-budgeted-amount tool: assign or move budgeted amounts between categories."""
 
+from functools import partial
 from typing import Literal
 
+import anyio.to_thread
 import ynab
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from mcp_types import InputRequiredResult
 
+from ynab_mcp.approval import require_approval
 from ynab_mcp.client import call_with_retry, require_writable, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
 from ynab_mcp.tools.months import parse_month
+from ynab_mcp.write_summaries import pending_budget_assign, pending_budget_move
 
 
 def assign_budgeted_amount(
@@ -197,15 +202,16 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
     """
 
     @mcp.tool(name="manage-budgeted-amount")
-    def manage_budgeted_amount_tool(
+    async def manage_budgeted_amount_tool(
         operation: Literal["assign", "move"],
         month: str,
+        ctx: Context,
         category_id: str | None = None,
         amount: int | None = None,
         from_category_id: str | None = None,
         to_category_id: str | None = None,
         budget_id: str | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | InputRequiredResult:
         """Assign or move a category's budgeted amount for a month.
 
         Parameters
@@ -230,11 +236,39 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
         """
         require_writable(settings)
         resolved_budget_id = resolve_budget_id(budget_id, settings)
+        resolved_month = parse_month(month)
+        arguments = {
+            "operation": operation,
+            "month": resolved_month,
+            "category_id": category_id,
+            "amount": amount,
+            "from_category_id": from_category_id,
+            "to_category_id": to_category_id,
+        }
         if operation == "assign":
             if category_id is None or amount is None:
                 raise ToolError("assign requires category_id and amount.")
-            category = assign_budgeted_amount(
-                client, resolved_budget_id, month, category_id, amount
+            asked = await require_approval(
+                ctx,
+                settings,
+                tool_name="manage-budgeted-amount",
+                budget_id=resolved_budget_id,
+                arguments=arguments,
+                pending=pending_budget_assign(
+                    client, resolved_budget_id, resolved_month, category_id, amount
+                ),
+            )
+            if asked is not None:
+                return asked
+            category = await anyio.to_thread.run_sync(
+                partial(
+                    assign_budgeted_amount,
+                    client,
+                    resolved_budget_id,
+                    month,
+                    category_id,
+                    amount,
+                )
             )
             return category.model_dump(mode="json")
 
@@ -242,13 +276,35 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
             raise ToolError(
                 "move requires from_category_id, to_category_id, and amount."
             )
-        result = move_budgeted_amount(
-            client,
-            resolved_budget_id,
-            month,
-            from_category_id,
-            to_category_id,
-            amount,
+        if from_category_id == to_category_id:
+            raise ToolError("from_category_id and to_category_id must differ.")
+        asked = await require_approval(
+            ctx,
+            settings,
+            tool_name="manage-budgeted-amount",
+            budget_id=resolved_budget_id,
+            arguments=arguments,
+            pending=pending_budget_move(
+                client,
+                resolved_budget_id,
+                resolved_month,
+                from_category_id,
+                to_category_id,
+                amount,
+            ),
+        )
+        if asked is not None:
+            return asked
+        result = await anyio.to_thread.run_sync(
+            partial(
+                move_budgeted_amount,
+                client,
+                resolved_budget_id,
+                month,
+                from_category_id,
+                to_category_id,
+                amount,
+            )
         )
         return {
             "from_category": result["from_category"].model_dump(mode="json"),

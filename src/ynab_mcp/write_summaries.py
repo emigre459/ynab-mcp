@@ -9,12 +9,14 @@ Every interpolated value goes through ``one_line``, so text an agent supplied
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TypeVar
 
 import ynab
 
 from ynab_mcp.approval import ItemState, PendingWrite
+from ynab_mcp.client import call_with_retry
 from ynab_mcp.tools.accounts import list_accounts
 from ynab_mcp.tools.budgets import list_budgets
 from ynab_mcp.tools.categories import list_categories
@@ -24,6 +26,7 @@ T = TypeVar("T")
 
 _FOOTER = "Nothing is written to YNAB unless you approve."
 _CENT = Decimal("0.01")
+_UNAVAILABLE = "(current values unavailable)"
 
 
 def one_line(value: object) -> str:
@@ -290,3 +293,217 @@ def pending_payee_merge(
         return render_payee_merge(names, source_id, target_id)
 
     return PendingWrite(read_state=dict, render=render)
+
+
+def _budget_change_line(
+    category_id: str, month: date, state: ItemState | None, change: int, *, delta: bool
+) -> str:
+    """Describe one category's budgeted change, or that it couldn't be read."""
+    when = month.strftime("%B %Y")
+    if state is None:
+        return f"{one_line(category_id)}, {when} {_UNAVAILABLE}"
+    budgeted = state["budgeted"]
+    after = budgeted + change if delta and isinstance(budgeted, int) else change
+    return (
+        f"{one_line(state['category_name'])}, {when}:  "
+        f"{format_money(budgeted)} now  →  {format_money(after)}"
+    )
+
+
+def render_budget_assign(
+    budget_name: str,
+    category_id: str,
+    month: date,
+    amount: int,
+    state: ItemState | None,
+) -> str:
+    """Build the prompt for setting a category's budgeted amount.
+
+    Parameters
+    ----------
+    budget_name : str
+        The budget's display name.
+    category_id : str
+        The category being set, shown raw if its read failed.
+    month : datetime.date
+        The month being budgeted.
+    amount : int
+        The new budgeted amount, in milliunits.
+    state : ItemState | None
+        The category's current values, or ``None`` if the read failed.
+
+    Returns
+    -------
+    str
+        The prompt text.
+    """
+    line = _budget_change_line(category_id, month, state, amount, delta=False)
+    if state is None:
+        line = f"{line}:  {format_money(amount)}"
+    return _prompt(
+        f'Set budgeted amount in budget "{one_line(budget_name)}"?', [f"  - {line}"]
+    )
+
+
+def render_budget_move(
+    budget_name: str,
+    from_category_id: str,
+    to_category_id: str,
+    month: date,
+    amount: int,
+    from_state: ItemState | None,
+    to_state: ItemState | None,
+) -> str:
+    """Build the prompt for moving budgeted money between categories.
+
+    Parameters
+    ----------
+    budget_name : str
+        The budget's display name.
+    from_category_id : str
+        The category losing money, shown raw if its read failed.
+    to_category_id : str
+        The category gaining money, shown raw if its read failed.
+    month : datetime.date
+        The month being budgeted.
+    amount : int
+        The amount to move, in milliunits.
+    from_state : ItemState | None
+        The source's current values, or ``None`` if the read failed.
+    to_state : ItemState | None
+        The target's current values, or ``None`` if the read failed.
+
+    Returns
+    -------
+    str
+        The prompt text.
+    """
+    source = _budget_change_line(
+        from_category_id, month, from_state, -amount, delta=True
+    )
+    target = _budget_change_line(to_category_id, month, to_state, amount, delta=True)
+    return _prompt(
+        f'Move budgeted money in budget "{one_line(budget_name)}"?',
+        [
+            f"  - Amount:  {format_money(amount)}",
+            f"  - From:    {source}",
+            f"  - To:      {target}",
+        ],
+    )
+
+
+def _category_label(category_id: str, month: date) -> str:
+    return f"category {one_line(category_id)} ({month:%Y-%m})"
+
+
+def _read_month_categories(
+    client: ynab.ApiClient, budget_id: str, month: date, category_ids: list[str]
+) -> dict[str, ItemState | None]:
+    """Read each category's current budgeted amount; a failure marks that item."""
+    api = ynab.CategoriesApi(client)
+    states: dict[str, ItemState | None] = {}
+    for category_id in category_ids:
+        label = _category_label(category_id, month)
+        try:
+            category = call_with_retry(
+                lambda: api.get_month_category_by_id(
+                    plan_id=budget_id, month=month, category_id=category_id
+                )
+            ).data.category
+        except Exception:
+            states[label] = None
+        else:
+            states[label] = {
+                "budgeted": category.budgeted,
+                "category_name": category.name,
+            }
+    return states
+
+
+def pending_budget_assign(
+    client: ynab.ApiClient, budget_id: str, month: date, category_id: str, amount: int
+) -> PendingWrite:
+    """Describe setting a category's budgeted amount for approval.
+
+    Parameters
+    ----------
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    budget_id : str
+        The YNAB budget id.
+    month : datetime.date
+        The month being budgeted.
+    category_id : str
+        The category being set.
+    amount : int
+        The new budgeted amount, in milliunits.
+
+    Returns
+    -------
+    PendingWrite
+        A pending write whose re-check covers the category's budgeted amount.
+    """
+
+    def render(states: Mapping[str, ItemState | None]) -> str:
+        names = load_names(client, budget_id)
+        state = states.get(_category_label(category_id, month))
+        return render_budget_assign(names.budget, category_id, month, amount, state)
+
+    return PendingWrite(
+        read_state=lambda: _read_month_categories(
+            client, budget_id, month, [category_id]
+        ),
+        render=render,
+    )
+
+
+def pending_budget_move(
+    client: ynab.ApiClient,
+    budget_id: str,
+    month: date,
+    from_category_id: str,
+    to_category_id: str,
+    amount: int,
+) -> PendingWrite:
+    """Describe moving budgeted money between categories for approval.
+
+    Parameters
+    ----------
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    budget_id : str
+        The YNAB budget id.
+    month : datetime.date
+        The month being budgeted.
+    from_category_id : str
+        The category losing money.
+    to_category_id : str
+        The category gaining money.
+    amount : int
+        The amount to move, in milliunits.
+
+    Returns
+    -------
+    PendingWrite
+        A pending write whose re-check covers both budgeted amounts: a move is
+        relative, so a changed total would land somewhere other than shown.
+    """
+
+    def render(states: Mapping[str, ItemState | None]) -> str:
+        names = load_names(client, budget_id)
+        return render_budget_move(
+            names.budget,
+            from_category_id,
+            to_category_id,
+            month,
+            amount,
+            states.get(_category_label(from_category_id, month)),
+            states.get(_category_label(to_category_id, month)),
+        )
+
+    return PendingWrite(
+        read_state=lambda: _read_month_categories(
+            client, budget_id, month, [from_category_id, to_category_id]
+        ),
+        render=render,
+    )
