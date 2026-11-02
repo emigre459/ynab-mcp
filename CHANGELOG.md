@@ -1,6 +1,11 @@
 # Changelog
 
 ## 2026-11-01
+- deps: clear 19 Dependabot security alerts (#89-#107) with patched versions:
+  `authlib` 1.7.2 → 1.9.2 (incl. critical GHSA-6v38-4h7w-rj9h, a JWS signature
+  verification bypass), `joserfc` 1.7.3 → 1.7.7, `dnspython` 2.8.0 → 2.9.1
+  (all transitive), and `pypdf` 6.21.2 → 6.21.4 (direct; floor raised to
+  `>=6.21.4`).
 - fix: `bulk-manage-transactions` updates no longer clear existing flags —
   every update PATCH used to send `flag_color: null` for an omitted flag,
   which YNAB treats as "remove the flag" (so e.g. a category-only write from
