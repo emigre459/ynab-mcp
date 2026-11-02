@@ -73,7 +73,34 @@ Registered only when Amazon credentials are configured:
   confidence/reasoning. Read-only — never writes a categorization back to
   YNAB.
 
-Write/mutation tools are out of scope for this server (a follow-up card).
+Write tools (`bulk-manage-transactions`, `manage-budgeted-amount`,
+`manage-payees`, `manage-scheduled-transaction`) are always listed. They refuse
+to run while `YNAB_READ_ONLY` is `true` (the default).
+
+### Approving writes
+
+With writes enabled, every write first shows you a readable summary, by name and
+in dollars, and runs only if you say yes:
+
+```
+Apply 1 change to budget "Rench Budget"?
+
+Update transaction (Chick-fil-A, 2026-10-18, -$11.42)
+  - Category:  Dining Out  →  Groceries
+
+Nothing is written to YNAB unless you approve.
+```
+
+- **No, or dismissing the prompt:** the tool returns a "Not applied" error, and
+  nothing is written.
+- **Yes:** the server re-reads the values it showed you. If any changed in YNAB
+  while the prompt was open, it refuses rather than writing over them.
+- **A client that can't show prompts** is refused.
+- **Unattended runs:** set `YNAB_REQUIRE_WRITE_APPROVAL=false` to skip approval.
+  Only the server's environment can turn it off; no tool call can.
+
+Building the summary makes a few read-only YNAB requests, which count toward
+YNAB's limit of about 200 requests an hour.
 
 ### Testing the spend-analysis tools against real data
 

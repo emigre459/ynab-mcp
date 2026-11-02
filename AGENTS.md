@@ -49,7 +49,8 @@ tools:
 
 - `config.py` — `Settings.from_env()` reads `YNAB_PAT` (required, fail-hard),
   `YNAB_DEFAULT_BUDGET_ID` (optional), `YNAB_READ_ONLY` (defaults `true`,
-  enforced by every write tool via `client.require_writable`).
+  enforced by every write tool via `client.require_writable`),
+  `YNAB_REQUIRE_WRITE_APPROVAL` (defaults `true`, see `approval.py`).
   `AmazonSettings.from_env()` reads
   `AMAZON_USERNAME`/`AMAZON_PASSWORD`/`AMAZON_OTP_SECRET_KEY` — fail-**soft**
   (returns `None`, never raises), the deliberate asymmetry with `Settings`:
@@ -96,6 +97,26 @@ tools:
   masked. `translate_amazon_exception` does the same for
   `amazonorders.exception.AmazonOrdersError`, with a remediation hint
   pointing at `scripts/amazon_login.py` for auth-specific failures.
+- `approval.py` — `require_approval(ctx, settings, *, tool_name, budget_id,
+  arguments, pending)` is the human checkpoint in front of every write (issue
+  #45). It knows nothing about YNAB; callers describe the write with a
+  `PendingWrite(read_state, render)`. The two MCP eras are incompatible:
+  `2026-07-28` returns an `InputRequiredResult` and is called again with the
+  answer (`ctx.elicit()` raises); the handshake era uses `ctx.elicit()` (the
+  result type is rejected). `None` means write; a returned result must be returned
+  from the tool; a `ToolError` means not applied. Approvals are single-use on the
+  modern era, since the SDK's sealed request state binds tool + arguments and
+  expires but is replayable. Values from `read_state` are re-read just before the
+  write and any change refuses (keys ending `_name` are display-only). Fails
+  closed: only a literal `True` is approval, and clients that can't prompt are
+  refused. Only the operator's environment can opt out; never add a per-call bypass.
+- `write_summaries.py` — the YNAB side of approval: prompt text and the reads
+  behind it, as pure `render_*` functions and `pending_*` builders. Every
+  interpolated value goes through `one_line`, so agent-supplied text can't forge
+  prompt lines. Lookups are tolerant at prompt time (ids show raw) but the re-check
+  fails closed. Prompts must show a write's real effect, including fields the SDK
+  clears by sending `null`. Mind YNAB's ~200 requests/hour: names are one list call
+  per kind, and more than `_BY_ID_LIMIT` transactions use one `list_transactions`.
 - `tools/` — one module per tool group, each with a plain testable function
   plus a thin `@mcp.tool`-registering `register(mcp, client, settings)`
   function (budgets.py's `register` omits `settings` — no default-budget
@@ -117,7 +138,12 @@ tools:
   issue #12) additionally give each registered closure its own
   required-field validation and a `fastmcp.Client`-based closure-dispatch
   test — the underlying plain function alone doesn't exercise that
-  branching.
+  branching. Their closures are `async` and follow one gate order:
+  `require_writable` → `resolve_budget_id` → field validation →
+  `require_approval` → write via `anyio.to_thread` (issue #45). Tests cover
+  approve + decline on both eras through the `era_mode` fixture in
+  `tests/conftest.py`; tests about something else pass
+  `require_write_approval=False`.
   - **`transactions_write.py`'s `bulk_manage_transactions` update path
     cannot use `TransactionsApi.update_transactions()`.** The installed
     `ynab` SDK (v4.2.0, latest on PyPI) has a real bug: its generated
@@ -177,7 +203,8 @@ reading before touching this area again: a `grand_total` sign-convention gotcha,
 why blank `order_number`s must still be matchable, and the login-at-startup fix),
 `docs/superpowers/specs/2026-07-14-retry-backoff-ynab-api-design.md` (retry/backoff
 + the `find-payee-transactions` N+1 fix — includes the full idempotency-safety
-reasoning behind the `include_5xx` rule above).
+reasoning behind the `include_5xx` rule above),
+`docs/superpowers/specs/2026-11-01-write-approval-prompt-design.md` (write approval).
 
 ### One-time setup for `find-amazon-transactions`
 
