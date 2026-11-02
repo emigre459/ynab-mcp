@@ -131,3 +131,30 @@ def test_amazon_settings_from_env_returns_none_when_both_missing(
     monkeypatch.delenv("AMAZON_PASSWORD", raising=False)
 
     assert AmazonSettings.from_env() is None
+
+
+def test_require_write_approval_defaults_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Write approval is on unless the operator explicitly opts out."""
+    monkeypatch.setattr("ynab_mcp.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("YNAB_PAT", "test-token")
+    monkeypatch.delenv("YNAB_REQUIRE_WRITE_APPROVAL", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.require_write_approval is True
+
+
+@pytest.mark.parametrize("raw_value", ["false", "0", "no", "FALSE"])
+def test_require_write_approval_false_values(
+    monkeypatch: pytest.MonkeyPatch, raw_value: str
+) -> None:
+    """Common falsy spellings of YNAB_REQUIRE_WRITE_APPROVAL parse to False."""
+    monkeypatch.setattr("ynab_mcp.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("YNAB_PAT", "test-token")
+    monkeypatch.setenv("YNAB_REQUIRE_WRITE_APPROVAL", raw_value)
+
+    settings = Settings.from_env()
+
+    assert settings.require_write_approval is False

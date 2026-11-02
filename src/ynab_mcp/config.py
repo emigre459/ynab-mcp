@@ -19,20 +19,25 @@ class Settings:
     ynab_default_budget_id : str | None
         A budget id every tool falls back to when the caller omits one.
     ynab_read_only : bool
-        Whether write/mutation tools are permitted. Currently read but
-        unenforced -- no write tools exist yet.
+        Whether write/mutation tools are refused, enforced by every write
+        tool via ``client.require_writable``.
+    require_write_approval : bool
+        Whether write tools ask a human to approve each write. Only the
+        server operator's environment can turn this off -- no tool call can.
     """
 
     ynab_pat: str
     ynab_default_budget_id: str | None
     ynab_read_only: bool
+    require_write_approval: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
         """Build ``Settings`` from the process environment.
 
         Loads `.env` first, then reads ``YNAB_PAT``,
-        ``YNAB_DEFAULT_BUDGET_ID``, and ``YNAB_READ_ONLY``.
+        ``YNAB_DEFAULT_BUDGET_ID``, ``YNAB_READ_ONLY``, and
+        ``YNAB_REQUIRE_WRITE_APPROVAL``.
 
         Returns
         -------
@@ -59,10 +64,14 @@ class Settings:
         read_only_raw = os.environ.get("YNAB_READ_ONLY", "true").strip().lower()
         ynab_read_only = read_only_raw not in _FALSY_VALUES
 
+        approval_raw = os.environ.get("YNAB_REQUIRE_WRITE_APPROVAL", "true")
+        require_write_approval = approval_raw.strip().lower() not in _FALSY_VALUES
+
         return cls(
             ynab_pat=ynab_pat,
             ynab_default_budget_id=default_budget_id,
             ynab_read_only=ynab_read_only,
+            require_write_approval=require_write_approval,
         )
 
 
