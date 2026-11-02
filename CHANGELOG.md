@@ -1,6 +1,9 @@
 # Changelog
 
 ## 2026-11-01
+- deps: bump `authlib` 1.7.2 → 1.9.2 (transitive via `fastmcp-slim`) to clear
+  critical Dependabot alert #89 (GHSA-6v38-4h7w-rj9h, a JWS signature
+  verification bypass). Lockfile-only.
 - fix: `bulk-manage-transactions` updates no longer clear existing flags —
   every update PATCH used to send `flag_color: null` for an omitted flag,
   which YNAB treats as "remove the flag" (so e.g. a category-only write from
