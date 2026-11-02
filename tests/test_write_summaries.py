@@ -108,10 +108,10 @@ def test_load_names_only_fetches_requested_kinds(mocker: MockerFixture) -> None:
 
 def test_payee_rename_summary() -> None:
     """A rename reads as old name to new name."""
-    assert render_payee_rename(_NAMES, "p1", "Amazon") == (
+    assert render_payee_rename(_NAMES, "p1", "Amazon Store") == (
         'Rename payee in budget "Rench Budget"?\n'
         "\n"
-        '  - "AMZN Mktp"  →  "Amazon"\n'
+        '  - "AMZN Mktp"  →  "Amazon Store"\n'
         "\n"
         f"{_FOOTER}"
     )
@@ -458,6 +458,7 @@ def _detail(transaction_id: str) -> SimpleNamespace:
         cleared="cleared",
         approved=True,
         flag_color=None,
+        deleted=False,
     )
 
 
@@ -538,3 +539,107 @@ def test_bulk_unhashable_approved_value_still_renders() -> None:
     )
 
     assert "['x']" in summary
+
+
+def test_scheduled_payee_id_wins_over_payee_name() -> None:
+    """YNAB ignores payee_name when payee_id is set, so the prompt must too."""
+    fields = {**_SCHEDULED_FIELDS, "payee_id": "p2", "payee_name": "Boyert's"}
+
+    summary = render_scheduled(_NAMES, "create", None, fields, None)
+
+    assert "Payee:      Amazon" in summary
+    assert "Boyert's" not in summary
+
+
+def test_rename_onto_existing_payee_warns_of_merge() -> None:
+    """Renaming to an existing payee's name merges them, irreversibly."""
+    summary = render_payee_rename(_NAMES, "p1", "amazon")
+
+    assert 'already exists, so YNAB will merge "AMZN Mktp" into it' in summary
+    assert "can't be undone" in summary
+
+
+def test_rename_to_own_name_or_new_name_has_no_merge_warning() -> None:
+    """A plain rename says nothing about merging."""
+    assert "merge" not in render_payee_rename(_NAMES, "p1", "Brand New")
+    assert "merge" not in render_payee_rename(_NAMES, "p1", "AMZN Mktp")
+
+
+def test_scheduled_update_read_failure_says_unset_fields_clear() -> None:
+    """A failed read can't list what clears, so the prompt warns generally."""
+    fields = {**_SCHEDULED_FIELDS, "memo": None}
+
+    summary = render_scheduled(_NAMES, "update", "s1", fields, None)
+
+    assert "Any existing value for fields not listed is cleared" in summary
+
+
+def test_bulk_update_read_failure_says_flag_clears() -> None:
+    """A failed read can't show the flag, so the prompt warns generally."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [{"action": "update", "id": "t1", "category_id": "c1"}],
+        {"transaction t1": None},
+    )
+
+    assert "Any existing flag is cleared" in summary
+
+
+def test_bulk_same_named_categories_show_as_a_change() -> None:
+    """A different id is a real change, even when the names match."""
+    names = NameDirectory(budget="B", categories={"c1": "Food", "c2": "Food"})
+    summary = render_bulk(
+        names,
+        [{"action": "update", "id": "t1", "category_id": "c1"}],
+        {"transaction t1": _txn_state(category_id="c2", category_name="Food")},
+    )
+
+    assert "Food  →  Food" in summary
+    assert "no change" not in summary
+
+
+def test_bulk_same_id_is_no_change_when_names_failed() -> None:
+    """A failed name lookup doesn't invent a change."""
+    names = NameDirectory(budget="B")
+    summary = render_bulk(
+        names,
+        [{"action": "update", "id": "t1", "category_id": "c2"}],
+        {"transaction t1": _txn_state()},
+    )
+
+    assert "no change" in summary
+    assert "→" not in summary
+
+
+def test_scheduled_same_named_category_change_is_shown() -> None:
+    """A different id is a real change, even when the names match."""
+    names = NameDirectory(
+        budget="B",
+        categories={"c9": "Groceries"},
+        accounts={"a1": "Chase Checking"},
+        payees={"p2": "Netflix"},
+    )
+    fields = {**_SCHEDULED_FIELDS, "category_id": "c9"}
+
+    summary = render_scheduled(names, "update", "s1", fields, _SCHEDULED_STATE)
+
+    assert "Groceries  →  Groceries" in summary
+
+
+def test_transaction_state_compares_deleted(mocker: MockerFixture) -> None:
+    """A transaction deleted after the prompt must not pass the re-check."""
+    api = mocker.patch("ynab.TransactionsApi").return_value
+    tombstone = _detail("t1")
+    tombstone.deleted = True
+    api.get_transaction_by_id.return_value = SimpleNamespace(
+        data=SimpleNamespace(transaction=tombstone)
+    )
+    operations: list[dict[str, object]] = [{"action": "delete", "id": "t1"}]
+
+    states = pending_transactions_write(
+        object(),  # type: ignore[arg-type]
+        "b",
+        operations,
+    ).read_state()
+
+    assert states["transaction t1"]["deleted"] is True  # type: ignore[index]

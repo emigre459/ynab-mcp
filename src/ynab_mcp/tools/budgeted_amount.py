@@ -265,7 +265,7 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
                     assign_budgeted_amount,
                     client,
                     resolved_budget_id,
-                    month,
+                    resolved_month.isoformat(),
                     category_id,
                     amount,
                 )
@@ -300,7 +300,7 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
                 move_budgeted_amount,
                 client,
                 resolved_budget_id,
-                month,
+                resolved_month.isoformat(),
                 from_category_id,
                 to_category_id,
                 amount,

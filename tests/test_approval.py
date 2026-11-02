@@ -15,6 +15,7 @@ from conftest import (
     reject_handler,
 )
 from fastmcp import Client, Context, FastMCP
+from fastmcp.client.elicitation import ElicitResult
 from fastmcp.exceptions import ToolError
 
 from ynab_mcp.approval import PendingWrite, fingerprint, require_approval
@@ -378,3 +379,28 @@ def test_valid_answer_passes_gate() -> None:
 
     with pytest.raises(ToolError, match="already used"):
         _gate(ctx)
+
+
+def _accept_raw(content: Any) -> Any:
+    async def handler(m: str, rt: Any, p: Any, c: Any) -> ElicitResult:
+        return ElicitResult(action="accept", content=content)
+
+    return handler
+
+
+@pytest.mark.parametrize(
+    "content",
+    [{"value": "true"}, {"value": 1}, {"value": "yes"}, {"value": "on"}, {}, None],
+    ids=str,
+)
+def test_loose_accept_refused_over_the_wire(era_mode: str, content: Any) -> None:
+    """Only a literal boolean true is approval, on both real eras."""
+    harness = Harness()
+    handler = _accept_raw(content)
+
+    result = harness.call(era_mode, handler)
+
+    assert result.is_error
+    assert "Not applied" in _text(result)
+    assert "declined" in _text(result)
+    assert harness.writes == []

@@ -523,6 +523,7 @@ def _existing_transaction(amount: int = -11420) -> SimpleNamespace:
         cleared="cleared",
         approved=True,
         flag_color=None,
+        deleted=False,
     )
     return SimpleNamespace(data=SimpleNamespace(transaction=detail))
 

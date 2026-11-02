@@ -25,6 +25,7 @@ from fastmcp.server.elicitation import (
 )
 from mcp.shared.exceptions import MCPError
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
+from pydantic import BaseModel, Field, StrictBool, ValidationError
 
 from ynab_mcp.config import Settings
 
@@ -51,6 +52,12 @@ _ARGUMENTS_CHANGED = (
 _REPLAYED = f"Not applied — this approval was already used. {_NOTHING_WRITTEN}"
 
 _used_tokens: dict[str, float] = {}
+
+
+class _ApprovalAnswer(BaseModel):
+    """The approval form: strict, so ``"true"`` or ``1`` can't coerce to yes."""
+
+    value: StrictBool = Field(title=_RESPONSE_TITLE)
 
 
 @dataclass(frozen=True)
@@ -182,7 +189,7 @@ async def _ask_modern_round_one(
 ) -> mcp_types.InputRequiredResult:
     _require_prompt_capable(ctx)
     summary, snapshot = await anyio.to_thread.run_sync(_capture, pending)
-    schema = parse_elicit_response_type(bool, response_title=_RESPONSE_TITLE).schema
+    schema = parse_elicit_response_type(_ApprovalAnswer).schema
     return mcp_types.InputRequiredResult(
         input_requests={
             _APPROVE_KEY: mcp_types.ElicitRequest(
@@ -225,12 +232,14 @@ async def _ask_handshake(ctx: Context, pending: PendingWrite) -> None:
     _require_prompt_capable(ctx)
     summary, snapshot = await anyio.to_thread.run_sync(_capture, pending)
     try:
-        answer = await ctx.elicit(summary, bool, response_title=_RESPONSE_TITLE)
+        answer = await ctx.elicit(summary, _ApprovalAnswer)
     except MCPError as exc:
         raise ToolError(_CANT_PROMPT) from exc
+    except ValidationError as exc:
+        raise ToolError(_DECLINED) from exc
     if isinstance(answer, CancelledElicitation):
         raise ToolError(_CANCELLED)
-    if not isinstance(answer, AcceptedElicitation) or answer.data is not True:
+    if not isinstance(answer, AcceptedElicitation) or answer.data.value is not True:
         raise ToolError(_DECLINED)
     await anyio.to_thread.run_sync(_recheck, pending, snapshot)
 

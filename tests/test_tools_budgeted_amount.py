@@ -1,6 +1,7 @@
 """Tests for ynab_mcp.tools.budgeted_amount."""
 
 import asyncio
+from datetime import date
 from types import SimpleNamespace
 from typing import Any
 
@@ -227,7 +228,7 @@ def test_manage_budgeted_amount_tool_dispatches_assign(mocker: MockerFixture) ->
 
     assert result == {"id": "cat-1", "budgeted": 50000}
     assign_mock.assert_called_once_with(
-        mocker.ANY, "budget-1", "current", "cat-1", 50000
+        mocker.ANY, "budget-1", date.today().replace(day=1).isoformat(), "cat-1", 50000
     )
 
 
@@ -273,7 +274,12 @@ def test_manage_budgeted_amount_tool_dispatches_move(mocker: MockerFixture) -> N
         "to_category": {"id": "to-cat", "budgeted": 40000},
     }
     move_mock.assert_called_once_with(
-        mocker.ANY, "budget-1", "current", "from-cat", "to-cat", 20000
+        mocker.ANY,
+        "budget-1",
+        date.today().replace(day=1).isoformat(),
+        "from-cat",
+        "to-cat",
+        20000,
     )
 
 
@@ -516,3 +522,23 @@ def test_same_category_move_rejected_before_prompt(
     assert result.is_error
     assert "must differ" in result.content[0].text
     assert prompts == []
+
+
+def test_current_month_writes_the_month_the_prompt_showed(
+    era_mode: str, mocker: MockerFixture
+) -> None:
+    """A write for "current" targets the month resolved for the prompt."""
+    _patch_categories_api(mocker, lambda **k: _month_category(1000, "Food"))
+    write = mocker.patch(
+        "ynab_mcp.tools.budgeted_amount.assign_budgeted_amount",
+        return_value=SimpleNamespace(model_dump=lambda mode="json": {}),
+    )
+    resolved = date(2026, 10, 1)
+    # parse_month resolves "current" in the closure; a later month rollover
+    # must not change what gets written.
+    mocker.patch("ynab_mcp.tools.budgeted_amount.parse_month", return_value=resolved)
+
+    result, _ = _call_tool(era_mode, approve_handler, {**_ASSIGN, "month": "current"})
+
+    assert not result.is_error
+    write.assert_called_once_with(mocker.ANY, "budget-1", "2026-10-01", "c1", 450000)

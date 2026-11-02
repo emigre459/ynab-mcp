@@ -512,6 +512,7 @@ def _existing(amount: int = -15490) -> SimpleNamespace:
         category_name=None,
         memo=None,
         flag_color=None,
+        deleted=False,
     )
     return SimpleNamespace(data=SimpleNamespace(scheduled_transaction=detail))
 
@@ -653,3 +654,20 @@ def test_missing_fields_rejected_before_prompt(
     assert result.is_error
     assert message in result.content[0].text
     assert prompts == []
+
+
+def test_scheduled_deleted_after_prompt_refuses(
+    era_mode: str, mocker: MockerFixture
+) -> None:
+    """An item deleted while the prompt was open is refused, not rewritten."""
+    tombstone = _existing()
+    tombstone.data.scheduled_transaction.deleted = True
+    reads = iter([_existing(), tombstone])
+    _patch_lookups(mocker, lambda **k: next(reads))
+    write = mocker.patch(f"{_MODULE}.update_scheduled_transaction")
+
+    result, _ = _call_tool(era_mode, approve_handler, _UPDATE)
+
+    assert result.is_error
+    assert "changed in YNAB" in result.content[0].text
+    write.assert_not_called()

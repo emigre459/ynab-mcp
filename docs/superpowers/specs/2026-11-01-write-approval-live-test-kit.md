@@ -41,6 +41,7 @@ at a time, in a fresh session:
 | C2 | "Try that again." | **Approve** | Transaction appears in YNAB |
 | C3 | "Change that transaction's category to <name>." | **Approve** | Prompt header identifies the transaction; shows `old  →  new` by name; YNAB updated |
 | C4 | "Delete that transaction." | **Approve** | Prompt identifies it; gone from YNAB |
+| C5 | Give a test transaction a flag in YNAB, then ask Claude to recategorize it | **Approve** | Prompt says `Flag: <color>  →  (cleared)`; confirm in YNAB that the flag really cleared. Report if it didn't: the prompt would be overstating |
 
 **If no prompt appears and Claude reports "this client can't show approval
 prompts":** that's the fail-closed path working, and it answers the open question.

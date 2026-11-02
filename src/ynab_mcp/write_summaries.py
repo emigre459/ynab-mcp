@@ -31,6 +31,12 @@ _CENT = Decimal("0.01")
 _UNAVAILABLE = "(current values unavailable)"
 _CLEARED = "(cleared)"
 _NONE = "(none)"
+_COMPARED_KEYS = {
+    "Payee": "payee_id",
+    "Category": "category_id",
+    "Account": "account_id",
+    "Amount": "amount",
+}
 # Above this many existing transactions, one list request replaces per-id reads:
 # YNAB allows about 200 requests an hour, and a categorization pass can touch
 # dozens of transactions, read twice each (at the prompt and at the re-check).
@@ -210,10 +216,17 @@ def render_payee_rename(names: NameDirectory, payee_id: str, new_name: str) -> s
     str
         The prompt text.
     """
-    return _prompt(
-        f'Rename payee in budget "{one_line(names.budget)}"?',
-        [f'  - "{names.payee(payee_id)}"  →  "{one_line(new_name)}"'],
-    )
+    current = names.payee(payee_id)
+    lines = [f'  - "{current}"  →  "{one_line(new_name)}"']
+    # YNAB merges payees when a rename lands on an existing name.
+    for other_id, other_name in names.payees.items():
+        if other_id != payee_id and other_name.casefold() == new_name.casefold():
+            lines.append(
+                f'  - "{one_line(other_name)}" already exists, so YNAB will merge '
+                f'"{current}" into it. This can\'t be undone.'
+            )
+            break
+    return _prompt(f'Rename payee in budget "{one_line(names.budget)}"?', lines)
 
 
 def render_payee_merge(names: NameDirectory, source_id: str, target_id: str) -> str:
@@ -526,6 +539,20 @@ def _plain(value: object) -> object:
     return str(value)
 
 
+def _is_unchanged(
+    label: str,
+    new: str | None,
+    old: str | None,
+    requested: Mapping[str, object],
+    state: ItemState,
+) -> bool:
+    """Compare ids and raw amounts where possible: names can repeat or be missing."""
+    key = _COMPARED_KEYS.get(label)
+    if key is not None and requested.get(key) is not None:
+        return str(requested[key]) == str(state.get(key))
+    return new == old
+
+
 def _field_lines(rows: list[tuple[str, str]]) -> list[str]:
     """Format label/value rows as aligned bullets."""
     width = max((len(label) for label, _ in rows), default=0) + 1
@@ -540,8 +567,11 @@ def _scheduled_targets(
     def text(value: object) -> str | None:
         return None if value is None else one_line(value)
 
-    payee = fields.get("payee_name") or (
-        names.payee(fields["payee_id"]) if fields.get("payee_id") else None
+    # YNAB only honors payee_name when payee_id is null.
+    payee = (
+        names.payee(fields["payee_id"])
+        if fields.get("payee_id")
+        else fields.get("payee_name")
     )
     category = fields.get("category_id")
     return [
@@ -635,13 +665,16 @@ def render_scheduled(
             else f"Update scheduled transaction {item_id} {_UNAVAILABLE} {in_budget}"
         )
         rows = [(label, shown(label, value)) for label, value in targets if value]
-        return _prompt(header, _field_lines(rows))
+        lines = _field_lines(rows)
+        if operation == "update":
+            lines.append("  - Any existing value for fields not listed is cleared")
+        return _prompt(header, lines)
 
     currents = _scheduled_currents(state)
     rows = []
     for label, new in targets:
         old = currents[label]
-        if old == new:
+        if _is_unchanged(label, new, old, fields, state):
             continue
         if label == "Amount":
             old_text = format_money(state["amount"])
@@ -712,6 +745,7 @@ def pending_scheduled_write(
                 "category_name": item.category_name,
                 "memo": item.memo,
                 "flag_color": _plain(item.flag_color),
+                "deleted": item.deleted,
             }
         }
 
@@ -799,8 +833,8 @@ def _update_lines(
             # clears an existing flag; every other unset field stays untouched.
             if label == "Flag" and old is not None:
                 rows.append((label, f"{old}  →  {_CLEARED}"))
-        elif new == old:
-            rows.append((label, f"{new} (no change)"))
+        elif _is_unchanged(label, new, old, operation, state):
+            rows.append((label, f"{old or new} (no change)"))
         else:
             rows.append((label, f"{old or _NONE}  →  {new}"))
     return _field_lines(rows)
@@ -829,10 +863,13 @@ def _operation_block(
             f"  - {_transaction_identity(state)}, {one_line(state['account_name'])}",
         ]
     if state is None:
-        return [
+        lines = [
             f"Update transaction {item_id} {_UNAVAILABLE}",
             *_new_value_lines(names, operation),
         ]
+        if operation.get("flag_color") is None:
+            lines.append("  - Any existing flag is cleared")
+        return lines
     return [
         f"Update transaction ({_transaction_identity(state)})",
         *_update_lines(names, operation, state),
@@ -884,6 +921,7 @@ def _transaction_state(transaction: ynab.TransactionDetail) -> ItemState:
         "cleared": _plain(transaction.cleared),
         "approved": transaction.approved,
         "flag_color": _plain(transaction.flag_color),
+        "deleted": transaction.deleted,
     }
 
 
