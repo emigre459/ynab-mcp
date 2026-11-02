@@ -1,14 +1,19 @@
 """manage-payees tool: rename or merge payees."""
 
+from functools import partial
 from typing import Literal
 
+import anyio.to_thread
 import ynab
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from mcp_types import InputRequiredResult
 
+from ynab_mcp.approval import require_approval
 from ynab_mcp.client import call_with_retry, require_writable, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
+from ynab_mcp.write_summaries import pending_payee_merge, pending_payee_rename
 
 
 def rename_payee(
@@ -119,14 +124,15 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
     """
 
     @mcp.tool(name="manage-payees")
-    def manage_payees_tool(
+    async def manage_payees_tool(
         operation: Literal["rename", "merge"],
+        ctx: Context,
         payee_id: str | None = None,
         new_name: str | None = None,
         source_payee_id: str | None = None,
         target_payee_id: str | None = None,
         budget_id: str | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | InputRequiredResult:
         """Rename or merge a payee.
 
         Parameters
@@ -147,14 +153,45 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
         """
         require_writable(settings)
         resolved_budget_id = resolve_budget_id(budget_id, settings)
+        arguments = {
+            "operation": operation,
+            "payee_id": payee_id,
+            "new_name": new_name,
+            "source_payee_id": source_payee_id,
+            "target_payee_id": target_payee_id,
+        }
         if operation == "rename":
             if payee_id is None or new_name is None:
                 raise ToolError("rename requires payee_id and new_name.")
-            payee = rename_payee(client, resolved_budget_id, payee_id, new_name)
+            pending = pending_payee_rename(
+                client, resolved_budget_id, payee_id, new_name
+            )
+            write = partial(
+                rename_payee, client, resolved_budget_id, payee_id, new_name
+            )
         else:
             if source_payee_id is None or target_payee_id is None:
                 raise ToolError("merge requires source_payee_id and target_payee_id.")
-            payee = merge_payees(
+            pending = pending_payee_merge(
                 client, resolved_budget_id, source_payee_id, target_payee_id
             )
+            write = partial(
+                merge_payees,
+                client,
+                resolved_budget_id,
+                source_payee_id,
+                target_payee_id,
+            )
+        asked = await require_approval(
+            ctx,
+            settings,
+            tool_name="manage-payees",
+            budget_id=resolved_budget_id,
+            arguments=arguments,
+            pending=pending,
+        )
+        if asked is not None:
+            return asked
+
+        payee = await anyio.to_thread.run_sync(write)
         return payee.model_dump(mode="json")

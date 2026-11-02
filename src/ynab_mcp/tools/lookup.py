@@ -61,7 +61,8 @@ def lookup_entity_by_id(
                 | ynab.MonthDetail
             ) = call_with_retry(
                 lambda: ynab.AccountsApi(client).get_account_by_id(
-                    plan_id=budget_id, account_id=entity_id  # type: ignore[arg-type]
+                    plan_id=budget_id,
+                    account_id=entity_id,  # type: ignore[arg-type]
                 )
             ).data.account
         elif entity_type == "category":

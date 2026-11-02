@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from types import SimpleNamespace
 from typing import Any
 
@@ -170,7 +170,7 @@ def test_unchanged_state_proceeds(era_mode: str) -> None:
 
 def test_name_only_change_proceeds(era_mode: str) -> None:
     """A rename between prompt and approval doesn't change what the write does."""
-    states = iter(
+    states: Iterator[Mapping[str, Any]] = iter(
         [
             {"item a": {"budgeted": 1, "category_name": "Food"}},
             {"item a": {"budgeted": 1, "category_name": "Groceries"}},
@@ -205,7 +205,9 @@ def test_recheck_read_failure_refuses(era_mode: str) -> None:
 
 def test_recheck_none_item_refuses(era_mode: str) -> None:
     """An item that can't be read at re-check time fails closed."""
-    states = iter([{"item a": {"budgeted": 1}}, {"item a": None}])
+    states: Iterator[Mapping[str, Any]] = iter(
+        [{"item a": {"budgeted": 1}}, {"item a": None}]
+    )
     harness = Harness(read_state=lambda: next(states))
 
     result = harness.call(era_mode, approve_handler)
@@ -296,7 +298,7 @@ def test_changed_arguments_refused() -> None:
 
 
 def _fake_ctx(responses: Any, state: str | None) -> Any:
-    """A context on a modern connection, past round 1."""
+    """Build a context on a modern connection, past round 1."""
     return SimpleNamespace(
         request_context=SimpleNamespace(protocol_version=MODERN),
         input_responses=responses,

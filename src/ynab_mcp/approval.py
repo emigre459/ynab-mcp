@@ -275,7 +275,11 @@ async def require_approval(
     """
     if not settings.require_write_approval:
         return None
-    if ctx.request_context.protocol_version not in MODERN_PROTOCOL_VERSIONS:
+    request_context = ctx.request_context
+    if (
+        request_context is None
+        or request_context.protocol_version not in MODERN_PROTOCOL_VERSIONS
+    ):
         await _ask_handshake(ctx, pending)
         return None
     write_fingerprint = fingerprint(tool_name, budget_id, arguments)
