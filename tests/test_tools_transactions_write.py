@@ -1,14 +1,21 @@
 """Tests for ynab_mcp.tools.transactions_write."""
 
+import asyncio
 import json
+from datetime import date
 from types import SimpleNamespace
+from typing import Any
 
 import tenacity
 import ynab
+from conftest import approve_handler, decline_handler
+from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from pytest import raises
 from pytest_mock import MockerFixture
 
+from ynab_mcp.config import Settings
+from ynab_mcp.tools import transactions_write
 from ynab_mcp.tools.transactions_write import bulk_manage_transactions
 
 
@@ -492,3 +499,124 @@ def test_bulk_manage_transactions_delete_retries_transient_429(
         {"action": "delete", "id": "txn-2", "status": "ok", "detail": None}
     ]
     assert transactions_api.return_value.delete_transaction.call_count == 2
+
+
+_APPROVAL_SETTINGS = Settings(
+    ynab_pat="x", ynab_default_budget_id="budget-1", ynab_read_only=False
+)
+_UPDATE_ARGS = {"operations": [{"action": "update", "id": "t1", "category_id": "c1"}]}
+_PLAIN = "ynab_mcp.tools.transactions_write.bulk_manage_transactions"
+
+
+def _existing_transaction(amount: int = -11420) -> SimpleNamespace:
+    detail = SimpleNamespace(
+        id="t1",
+        var_date=date(2026, 10, 18),
+        amount=amount,
+        payee_id="p9",
+        payee_name="Chick-fil-A",
+        category_id="c2",
+        category_name="Dining Out",
+        account_id="a1",
+        account_name="Chase Checking",
+        memo=None,
+        cleared="cleared",
+        approved=True,
+        flag_color=None,
+    )
+    return SimpleNamespace(data=SimpleNamespace(transaction=detail))
+
+
+def _patch_lookups(mocker: MockerFixture, reads: Any) -> None:
+    prefix = "ynab_mcp.write_summaries"
+    mocker.patch(
+        f"{prefix}.list_budgets",
+        return_value=[SimpleNamespace(id="budget-1", name="Rench Budget")],
+    )
+    mocker.patch(
+        f"{prefix}.list_categories",
+        return_value=[SimpleNamespace(id="c1", name="Groceries")],
+    )
+    api = mocker.patch("ynab.TransactionsApi").return_value
+    api.get_transaction_by_id.side_effect = reads
+
+
+def _call_tool(mode: str, handler: Any, args: dict[str, Any]) -> tuple[Any, list[str]]:
+    mcp = FastMCP("test")
+    transactions_write.register(mcp, object(), _APPROVAL_SETTINGS)  # type: ignore[arg-type]
+    prompts: list[str] = []
+
+    async def recording(m: str, rt: Any, p: Any, c: Any) -> Any:
+        prompts.append(m)
+        return await handler(m, rt, p, c)
+
+    async def _call() -> Any:
+        async with Client(mcp, mode=mode, elicitation_handler=recording) as client:
+            return await client.call_tool(
+                "bulk-manage-transactions", args, raise_on_error=False
+            )
+
+    return asyncio.run(_call()), prompts
+
+
+def test_bulk_approve_writes(era_mode: str, mocker: MockerFixture) -> None:
+    """Approving runs the write, after showing the change by name."""
+    _patch_lookups(mocker, lambda **k: _existing_transaction())
+    write = mocker.patch(_PLAIN, return_value=[])
+
+    result, prompts = _call_tool(era_mode, approve_handler, _UPDATE_ARGS)
+
+    assert not result.is_error
+    assert "Category:  Dining Out  →  Groceries" in prompts[0]
+    write.assert_called_once_with(mocker.ANY, "budget-1", _UPDATE_ARGS["operations"])
+
+
+def test_bulk_result_shape_unchanged(era_mode: str, mocker: MockerFixture) -> None:
+    """Approved calls return the same per-operation results as before."""
+    _patch_lookups(mocker, lambda **k: _existing_transaction())
+    outcome = [{"action": "update", "id": "t1", "status": "ok", "detail": None}]
+    mocker.patch(_PLAIN, return_value=outcome)
+
+    result, _ = _call_tool(era_mode, approve_handler, _UPDATE_ARGS)
+
+    assert result.structured_content == {"result": outcome}
+
+
+def test_bulk_decline_makes_no_write(era_mode: str, mocker: MockerFixture) -> None:
+    """Declining never reaches the write."""
+    _patch_lookups(mocker, lambda **k: _existing_transaction())
+    write = mocker.patch(_PLAIN)
+
+    result, _ = _call_tool(era_mode, decline_handler, _UPDATE_ARGS)
+
+    assert result.is_error
+    assert "Not applied" in result.content[0].text
+    write.assert_not_called()
+
+
+def test_bulk_transaction_change_refuses(era_mode: str, mocker: MockerFixture) -> None:
+    """A transaction changed after the prompt is refused, not overwritten."""
+    amounts = iter([-11420, -99000])
+    _patch_lookups(mocker, lambda **k: _existing_transaction(next(amounts)))
+    write = mocker.patch(_PLAIN)
+
+    result, _ = _call_tool(era_mode, approve_handler, _UPDATE_ARGS)
+
+    assert result.is_error
+    assert "transaction t1 changed" in result.content[0].text
+    write.assert_not_called()
+
+
+def test_bulk_invalid_operation_rejected_before_prompt(
+    era_mode: str, mocker: MockerFixture
+) -> None:
+    """A call that would be rejected anyway never asks for approval."""
+    _patch_lookups(mocker, lambda **k: _existing_transaction())
+
+    result, prompts = _call_tool(
+        era_mode, approve_handler, {"operations": [{"action": "update"}]}
+    )
+
+    assert result.is_error
+    assert "update requires 'id'" in result.content[0].text
+    assert prompts == []

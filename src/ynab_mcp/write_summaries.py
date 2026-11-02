@@ -22,6 +22,7 @@ from ynab_mcp.tools.accounts import list_accounts
 from ynab_mcp.tools.budgets import list_budgets
 from ynab_mcp.tools.categories import list_categories
 from ynab_mcp.tools.payees import list_payees
+from ynab_mcp.tools.transactions import list_transactions
 
 T = TypeVar("T")
 
@@ -30,6 +31,10 @@ _CENT = Decimal("0.01")
 _UNAVAILABLE = "(current values unavailable)"
 _CLEARED = "(cleared)"
 _NONE = "(none)"
+# Above this many existing transactions, one list request replaces per-id reads:
+# YNAB allows about 200 requests an hour, and a categorization pass can touch
+# dozens of transactions, read twice each (at the prompt and at the re-check).
+_BY_ID_LIMIT = 5
 
 
 def one_line(value: object) -> str:
@@ -723,3 +728,236 @@ def pending_scheduled_write(
         )
 
     return PendingWrite(read_state=read_state, render=render)
+
+
+def _yes_no(value: object) -> str:
+    if value is True:
+        return "yes"
+    return "no" if value is False else one_line(value)
+
+
+def _requested_rows(
+    names: NameDirectory, operation: Mapping[str, object]
+) -> list[tuple[str, str | None]]:
+    """List an operation's requested values for display; ``None`` means unset."""
+
+    def text(key: str, render: Callable[[object], str] = one_line) -> str | None:
+        value = operation.get(key)
+        return None if value is None else render(value)
+
+    return [
+        ("Date", text("date")),
+        ("Payee", text("payee_id", names.payee) or text("payee_name")),
+        ("Amount", text("amount", format_money)),
+        ("Category", text("category_id", names.category)),
+        ("Account", text("account_id", names.account)),
+        ("Memo", text("memo")),
+        ("Flag", text("flag_color")),
+        ("Cleared", text("cleared")),
+        ("Approved", text("approved", _yes_no)),
+    ]
+
+
+def _new_value_lines(
+    names: NameDirectory, operation: Mapping[str, object]
+) -> list[str]:
+    rows = [
+        (label, format_flow(operation.get("amount")) if label == "Amount" else value)
+        for label, value in _requested_rows(names, operation)
+        if value is not None
+    ]
+    return _field_lines(rows)
+
+
+def _current_values(state: ItemState) -> dict[str, str | None]:
+    def text(key: str, render: Callable[[object], str] = one_line) -> str | None:
+        value = state.get(key)
+        return None if value is None else render(value)
+
+    return {
+        "Date": text("date"),
+        "Payee": text("payee_name"),
+        "Amount": text("amount", format_money),
+        "Category": text("category_name"),
+        "Account": text("account_name"),
+        "Memo": text("memo"),
+        "Flag": text("flag_color"),
+        "Cleared": text("cleared"),
+        "Approved": text("approved", _yes_no),
+    }
+
+
+def _update_lines(
+    names: NameDirectory, operation: Mapping[str, object], state: ItemState
+) -> list[str]:
+    currents = _current_values(state)
+    rows: list[tuple[str, str]] = []
+    for label, new in _requested_rows(names, operation):
+        old = currents[label]
+        if new is None:
+            # The update path always sends flag_color, null when unset, which
+            # clears an existing flag; every other unset field stays untouched.
+            if label == "Flag" and old is not None:
+                rows.append((label, f"{old}  →  {_CLEARED}"))
+        elif new == old:
+            rows.append((label, f"{new} (no change)"))
+        else:
+            rows.append((label, f"{old or _NONE}  →  {new}"))
+    return _field_lines(rows)
+
+
+def _transaction_identity(state: ItemState) -> str:
+    payee = one_line(state.get("payee_name") or "(no payee)")
+    return f"{payee}, {one_line(state['date'])}, {format_money(state['amount'])}"
+
+
+def _operation_block(
+    names: NameDirectory,
+    operation: Mapping[str, object],
+    states: Mapping[str, ItemState | None],
+) -> list[str]:
+    action = operation["action"]
+    if action == "create":
+        return ["Create transaction", *_new_value_lines(names, operation)]
+    item_id = one_line(operation["id"])
+    state = states.get(f"transaction {item_id}")
+    if action == "delete":
+        if state is None:
+            return [f"Delete transaction {item_id} {_UNAVAILABLE}"]
+        return [
+            "Delete transaction",
+            f"  - {_transaction_identity(state)}, {one_line(state['account_name'])}",
+        ]
+    if state is None:
+        return [
+            f"Update transaction {item_id} {_UNAVAILABLE}",
+            *_new_value_lines(names, operation),
+        ]
+    return [
+        f"Update transaction ({_transaction_identity(state)})",
+        *_update_lines(names, operation, state),
+    ]
+
+
+def render_bulk(
+    names: NameDirectory,
+    operations: list[dict[str, object]],
+    states: Mapping[str, ItemState | None],
+) -> str:
+    """Build the prompt for a bulk transaction write.
+
+    Parameters
+    ----------
+    names : NameDirectory
+        Display names.
+    operations : list[dict[str, object]]
+        The validated operations; every one is listed, with no truncation.
+    states : Mapping[str, ItemState | None]
+        Existing transactions' current values, by item label.
+
+    Returns
+    -------
+    str
+        The prompt text.
+    """
+    count = len(operations)
+    noun = "change" if count == 1 else "changes"
+    lines: list[str] = []
+    for operation in operations:
+        if lines:
+            lines.append("")
+        lines.extend(_operation_block(names, operation, states))
+    return _prompt(f'Apply {count} {noun} to budget "{one_line(names.budget)}"?', lines)
+
+
+def _transaction_state(transaction: ynab.TransactionDetail) -> ItemState:
+    return {
+        "date": _plain(transaction.var_date),
+        "amount": transaction.amount,
+        "payee_id": _plain(transaction.payee_id),
+        "payee_name": transaction.payee_name,
+        "category_id": _plain(transaction.category_id),
+        "category_name": transaction.category_name,
+        "account_id": _plain(transaction.account_id),
+        "account_name": transaction.account_name,
+        "memo": transaction.memo,
+        "cleared": _plain(transaction.cleared),
+        "approved": transaction.approved,
+        "flag_color": _plain(transaction.flag_color),
+    }
+
+
+def _read_transactions(
+    client: ynab.ApiClient, budget_id: str, transaction_ids: list[str]
+) -> dict[str, ItemState | None]:
+    """Read existing transactions: per id when few, one list request when many."""
+    if len(transaction_ids) > _BY_ID_LIMIT:
+        found = {
+            str(transaction.id): _transaction_state(transaction)
+            for transaction in list_transactions(client, budget_id)
+        }
+        return {f"transaction {i}": found.get(i) for i in transaction_ids}
+
+    api = ynab.TransactionsApi(client)
+    states: dict[str, ItemState | None] = {}
+    for transaction_id in transaction_ids:
+        try:
+            transaction = call_with_retry(
+                lambda: api.get_transaction_by_id(
+                    plan_id=budget_id, transaction_id=transaction_id
+                )
+            ).data.transaction
+        except Exception:
+            states[f"transaction {transaction_id}"] = None
+        else:
+            states[f"transaction {transaction_id}"] = _transaction_state(transaction)
+    return states
+
+
+def pending_transactions_write(
+    client: ynab.ApiClient, budget_id: str, operations: list[dict[str, object]]
+) -> PendingWrite:
+    """Describe a bulk transaction write for approval.
+
+    Parameters
+    ----------
+    client : ynab.ApiClient
+        A configured YNAB API client.
+    budget_id : str
+        The YNAB budget id.
+    operations : list[dict[str, object]]
+        The validated operations.
+
+    Returns
+    -------
+    PendingWrite
+        A pending write whose re-check covers every transaction being updated
+        or deleted.
+    """
+    existing_ids = list(
+        dict.fromkeys(
+            one_line(operation["id"])
+            for operation in operations
+            if operation["action"] in ("update", "delete")
+        )
+    )
+
+    def wants(key: str) -> bool:
+        return any(operation.get(key) for operation in operations)
+
+    def render(states: Mapping[str, ItemState | None]) -> str:
+        names = load_names(
+            client,
+            budget_id,
+            categories=wants("category_id"),
+            accounts=wants("account_id"),
+            payees=wants("payee_id"),
+        )
+        return render_bulk(names, operations, states)
+
+    return PendingWrite(
+        read_state=lambda: (
+            _read_transactions(client, budget_id, existing_ids) if existing_ids else {}
+        ),
+        render=render,
+    )

@@ -12,8 +12,10 @@ from ynab_mcp.write_summaries import (
     format_money,
     load_names,
     one_line,
+    pending_transactions_write,
     render_budget_assign,
     render_budget_move,
+    render_bulk,
     render_scheduled,
     render_payee_merge,
     render_payee_rename,
@@ -279,3 +281,260 @@ def test_scheduled_delete_summary() -> None:
         "\n"
         f"{_FOOTER}"
     )
+
+
+def _txn_state(**overrides: object) -> dict[str, object]:
+    return {
+        "date": "2026-10-18",
+        "amount": -11420,
+        "payee_id": "p9",
+        "payee_name": "Chick-fil-A",
+        "category_id": "c2",
+        "category_name": "Dining Out",
+        "account_id": "a1",
+        "account_name": "Chase Checking",
+        "memo": None,
+        "cleared": "cleared",
+        "approved": True,
+        "flag_color": None,
+        **overrides,
+    }
+
+
+_BULK_NAMES = NameDirectory(
+    budget="Rench Budget",
+    categories={"c1": "Groceries", "c2": "Dining Out", "c3": "Home & Garden"},
+    accounts={"a1": "Chase Checking"},
+)
+
+
+def test_bulk_summary_matches_spec_example() -> None:
+    """The prompt reads exactly as the approved design showed it."""
+    operations: list[dict[str, object]] = [
+        {
+            "action": "create",
+            "date": "2026-10-20",
+            "payee_name": "Boyert's",
+            "amount": -42170,
+            "category_id": "c3",
+            "account_id": "a1",
+        },
+        {"action": "update", "id": "t1", "category_id": "c1"},
+        {"action": "delete", "id": "t2"},
+    ]
+    states = {
+        "transaction t1": _txn_state(),
+        "transaction t2": _txn_state(
+            date="2026-10-02",
+            amount=-19990,
+            payee_name="Amazon.com",
+        ),
+    }
+
+    assert render_bulk(_BULK_NAMES, operations, states) == (
+        'Apply 3 changes to budget "Rench Budget"?\n'
+        "\n"
+        "Create transaction\n"
+        "  - Date:      2026-10-20\n"
+        "  - Payee:     Boyert's\n"
+        "  - Amount:    -$42.17 (outflow)\n"
+        "  - Category:  Home & Garden\n"
+        "  - Account:   Chase Checking\n"
+        "\n"
+        "Update transaction (Chick-fil-A, 2026-10-18, -$11.42)\n"
+        "  - Category:  Dining Out  →  Groceries\n"
+        "\n"
+        "Delete transaction\n"
+        "  - Amazon.com, 2026-10-02, -$19.99, Chase Checking\n"
+        "\n"
+        f"{_FOOTER}"
+    )
+
+
+def test_bulk_singular_header() -> None:
+    """One change isn't "1 changes"."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [{"action": "update", "id": "t1", "category_id": "c1"}],
+        {"transaction t1": _txn_state()},
+    )
+
+    assert summary.startswith('Apply 1 change to budget "Rench Budget"?\n')
+
+
+def test_bulk_requested_but_unchanged_field_says_so() -> None:
+    """A field set to its current value is visibly a no-op."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [{"action": "update", "id": "t1", "approved": True, "memo": "x"}],
+        {"transaction t1": _txn_state()},
+    )
+
+    assert "  - Approved:  yes (no change)" in summary
+    assert "  - Memo:      (none)  →  x" in summary
+
+
+def test_bulk_update_shows_flag_being_cleared() -> None:
+    """Every update sends flag_color null, so an existing flag visibly clears."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [{"action": "update", "id": "t1", "category_id": "c1"}],
+        {"transaction t1": _txn_state(flag_color="red")},
+    )
+
+    assert "  - Flag:      red  →  (cleared)" in summary
+
+
+def test_bulk_malformed_values_still_render() -> None:
+    """Bad values show as given; the write reports them after approval."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [
+            {"action": "create", "account_id": "a1", "amount": "abc", "date": None},
+            {"action": "update", "id": "t1", "amount": "xyz"},
+        ],
+        {"transaction t1": _txn_state()},
+    )
+
+    assert "  - Amount:   abc" in summary
+    assert "-$11.42  →  xyz" in summary
+
+
+def test_bulk_memo_cannot_forge_lines() -> None:
+    """A hostile memo stays on one line."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [{"action": "create", "account_id": "a1", "memo": "x\n\nDelete nothing"}],
+        {},
+    )
+
+    assert "  - Memo:     x Delete nothing" in summary
+    assert "\nDelete nothing" not in summary
+
+
+def test_bulk_duplicate_id_renders_both_operations() -> None:
+    """Two operations on one transaction both appear in the prompt."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [
+            {"action": "update", "id": "t1", "category_id": "c1"},
+            {"action": "delete", "id": "t1"},
+        ],
+        {"transaction t1": _txn_state()},
+    )
+
+    assert "Update transaction (Chick-fil-A" in summary
+    assert "Delete transaction\n  - Chick-fil-A" in summary
+
+
+def test_bulk_read_failure_marks_unavailable() -> None:
+    """Without current values the prompt says so and shows new values only."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [
+            {"action": "update", "id": "t1", "category_id": "c1"},
+            {"action": "delete", "id": "t2"},
+        ],
+        {"transaction t1": None},
+    )
+
+    assert "Update transaction t1 (current values unavailable)" in summary
+    assert "  - Category:  Groceries" in summary
+    assert "Delete transaction t2 (current values unavailable)" in summary
+
+
+def _detail(transaction_id: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=transaction_id,
+        var_date=date(2026, 10, 18),
+        amount=-11420,
+        payee_id="p9",
+        payee_name="Chick-fil-A",
+        category_id="c2",
+        category_name="Dining Out",
+        account_id="a1",
+        account_name="Chase Checking",
+        memo=None,
+        cleared="cleared",
+        approved=True,
+        flag_color=None,
+    )
+
+
+def test_bulk_small_batch_uses_per_id_reads(mocker: MockerFixture) -> None:
+    """A few ids read individually rather than downloading the whole budget."""
+    listing = mocker.patch("ynab_mcp.write_summaries.list_transactions")
+    api = mocker.patch("ynab.TransactionsApi").return_value
+    api.get_transaction_by_id.side_effect = lambda **k: SimpleNamespace(
+        data=SimpleNamespace(transaction=_detail(k["transaction_id"]))
+    )
+    operations: list[dict[str, object]] = [
+        {"action": "delete", "id": f"t{i}"} for i in range(5)
+    ]
+
+    pending = pending_transactions_write(object(), "b", operations)  # type: ignore[arg-type]
+    states = pending.read_state()
+
+    assert api.get_transaction_by_id.call_count == 5
+    listing.assert_not_called()
+    assert states["transaction t0"]["amount"] == -11420  # type: ignore[index]
+
+
+def test_bulk_small_batch_marks_only_failed_item(mocker: MockerFixture) -> None:
+    """One unreadable id doesn't lose the others."""
+    api = mocker.patch("ynab.TransactionsApi").return_value
+
+    def read(**kwargs: str) -> SimpleNamespace:
+        if kwargs["transaction_id"] == "bad":
+            raise RuntimeError("boom")
+        return SimpleNamespace(
+            data=SimpleNamespace(transaction=_detail(kwargs["transaction_id"]))
+        )
+
+    api.get_transaction_by_id.side_effect = read
+    operations: list[dict[str, object]] = [
+        {"action": "delete", "id": i} for i in ("good", "bad")
+    ]
+
+    states = pending_transactions_write(
+        object(),  # type: ignore[arg-type]
+        "b",
+        operations,
+    ).read_state()
+
+    assert states["transaction bad"] is None
+    assert states["transaction good"] is not None
+
+
+def test_bulk_large_batch_uses_one_list_call(mocker: MockerFixture) -> None:
+    """Many ids cost one request, against YNAB's hourly rate limit."""
+    listing = mocker.patch(
+        "ynab_mcp.write_summaries.list_transactions",
+        return_value=[_detail(f"t{i}") for i in range(5)],
+    )
+    api = mocker.patch("ynab.TransactionsApi").return_value
+    operations: list[dict[str, object]] = [
+        {"action": "delete", "id": f"t{i}"} for i in range(6)
+    ]
+
+    states = pending_transactions_write(
+        object(),  # type: ignore[arg-type]
+        "b",
+        operations,
+    ).read_state()
+
+    listing.assert_called_once()
+    api.get_transaction_by_id.assert_not_called()
+    assert states["transaction t5"] is None
+    assert states["transaction t0"] is not None
+
+
+def test_bulk_unhashable_approved_value_still_renders() -> None:
+    """A malformed approved value can't crash the prompt."""
+    summary = render_bulk(
+        _BULK_NAMES,
+        [{"action": "create", "account_id": "a1", "approved": ["x"]}],
+        {},
+    )
+
+    assert "['x']" in summary

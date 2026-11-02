@@ -1,15 +1,20 @@
 """bulk-manage-transactions tool: create/update/delete transactions in one call."""
 
+from functools import partial
 from typing import Literal, TypedDict
 
+import anyio.to_thread
 import pydantic
 import ynab
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from mcp_types import InputRequiredResult
 
+from ynab_mcp.approval import require_approval
 from ynab_mcp.client import call_with_retry, require_writable, resolve_budget_id
 from ynab_mcp.config import Settings
 from ynab_mcp.errors import translate_api_exception
+from ynab_mcp.write_summaries import pending_transactions_write
 
 
 class TransactionOperationResult(TypedDict):
@@ -56,6 +61,36 @@ def _build_updated_transaction(
     )
 
 
+def validate_operations(operations: list[dict[str, object]]) -> None:
+    """Reject a bulk call whose operations could never be applied.
+
+    Parameters
+    ----------
+    operations : list[dict[str, object]]
+        The operations passed to ``bulk_manage_transactions``.
+
+    Raises
+    ------
+    fastmcp.exceptions.ToolError
+        If ``operations`` is empty, or any operation has an invalid or
+        missing ``action``/``id``/``account_id``.
+    """
+    if not operations:
+        raise ToolError("bulk-manage-transactions requires at least one operation.")
+
+    for index, operation in enumerate(operations):
+        action = operation.get("action")
+        if action not in ("create", "update", "delete"):
+            raise ToolError(
+                f"operations[{index}]: action must be one of 'create', "
+                "'update', 'delete'."
+            )
+        if action in ("update", "delete") and not operation.get("id"):
+            raise ToolError(f"operations[{index}]: {action} requires 'id'.")
+        if action == "create" and not operation.get("account_id"):
+            raise ToolError(f"operations[{index}]: create requires 'account_id'.")
+
+
 def bulk_manage_transactions(
     client: ynab.ApiClient, budget_id: str, operations: list[dict[str, object]]
 ) -> list[TransactionOperationResult]:
@@ -99,20 +134,7 @@ def bulk_manage_transactions(
         missing ``action``/``id``/``account_id``. Per-item YNAB API
         failures do NOT raise -- they appear in the returned results.
     """
-    if not operations:
-        raise ToolError("bulk-manage-transactions requires at least one operation.")
-
-    for index, operation in enumerate(operations):
-        action = operation.get("action")
-        if action not in ("create", "update", "delete"):
-            raise ToolError(
-                f"operations[{index}]: action must be one of 'create', "
-                "'update', 'delete'."
-            )
-        if action in ("update", "delete") and not operation.get("id"):
-            raise ToolError(f"operations[{index}]: {action} requires 'id'.")
-        if action == "create" and not operation.get("account_id"):
-            raise ToolError(f"operations[{index}]: create requires 'account_id'.")
+    validate_operations(operations)
 
     api = ynab.TransactionsApi(client)
     results: dict[int, TransactionOperationResult] = {}
@@ -272,9 +294,11 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
     """
 
     @mcp.tool(name="bulk-manage-transactions")
-    def bulk_manage_transactions_tool(
-        operations: list[dict[str, object]], budget_id: str | None = None
-    ) -> list[TransactionOperationResult]:
+    async def bulk_manage_transactions_tool(
+        operations: list[dict[str, object]],
+        ctx: Context,
+        budget_id: str | None = None,
+    ) -> list[TransactionOperationResult] | InputRequiredResult:
         """Create, update, and/or delete multiple transactions in one call.
 
         Parameters
@@ -290,4 +314,17 @@ def register(mcp: FastMCP, client: ynab.ApiClient, settings: Settings) -> None:
         """
         require_writable(settings)
         resolved_budget_id = resolve_budget_id(budget_id, settings)
-        return bulk_manage_transactions(client, resolved_budget_id, operations)
+        validate_operations(operations)
+        asked = await require_approval(
+            ctx,
+            settings,
+            tool_name="bulk-manage-transactions",
+            budget_id=resolved_budget_id,
+            arguments={"operations": operations},
+            pending=pending_transactions_write(client, resolved_budget_id, operations),
+        )
+        if asked is not None:
+            return asked
+        return await anyio.to_thread.run_sync(
+            partial(bulk_manage_transactions, client, resolved_budget_id, operations)
+        )
